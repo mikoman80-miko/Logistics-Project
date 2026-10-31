@@ -1,0 +1,56 @@
+@import "tailwindcss/theme";
+@import "tailwindcss/utilities";
+@import "./components.css";
+
+/* 디자인 기준값: 여기만 바꾸면 전체 화면에 반영됨 */
+@theme {
+  /* 주요 색상: bg-primary, text-primary, border-primary 형태로 사용 */
+  --color-primary: #00529b;
+  --color-primary-hover: #004380;
+  --color-primary-dark: #003d73;
+  --color-primary-soft: #e8f4ff;
+
+  /* 상태 색상: 완료/정상, 오류/삭제, 주의 */
+  --color-success: #2e7d32;
+  --color-success-hover: #256d29;
+  --color-success-dark: #1b5e20;
+  --color-success-soft: #e8f5e9;
+
+  --color-danger: #d32f2f;
+  --color-danger-hover: #c62828;
+  --color-danger-dark: #b71c1c;
+  --color-danger-soft: #fff0f0;
+
+  --color-warning: #e65100;
+  --color-warning-hover: #d84315;
+  --color-warning-dark: #bf360c;
+  --color-warning-soft: #fff3e0;
+
+  /* 스캔 입력 등 작업자의 시선을 끌어야 하는 영역 */
+  --color-highlight: #ffffcc;
+  --color-highlight-line: #ffeb3b;
+
+  /* 글자, 선, 배경 */
+  --color-ink: #333333;
+  --color-muted: #666666;
+  --color-line: #cccccc;
+  --color-line-strong: #a0a0a0;
+  --color-surface-app: #eef0f3;
+  --color-surface-panel: #e9ecef;
+  --color-surface-head: #f0f0f0;
+  --color-surface-active: #e2e2e2;
+  --color-surface-nav: #2f353a;
+  --color-disabled: #dddddd;
+  --color-disabled-ink: #888888;
+
+  /* 글자 크기: text-caption, text-body, text-title, text-heading */
+  --text-caption: 11px;
+  --text-body: 12px;
+  --text-title: 13px;
+  --text-heading: 14px;
+
+  /* 버튼, 입력창 높이: h-control-sm, h-control, h-control-lg */
+  --spacing-control-sm: 22px;
+  --spacing-control: 26px;
+  --spacing-control-lg: 30px;
+}

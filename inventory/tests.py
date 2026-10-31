@@ -1,0 +1,453 @@
+from datetime import datetime, timedelta
+from unittest.mock import patch
+
+from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+from rest_framework.test import APITestCase
+
+from .models import InventoryLog, Item, ItemSerial, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+
+ITEMS = '/api/inventory/items/'
+SERIALS = '/api/inventory/serials/'
+POS = '/api/inventory/purchase-orders/'
+ORDERS = '/api/inventory/orders/'
+RETURNS = '/api/inventory/returns/'
+LOGS = '/api/inventory/logs/'
+
+
+class BaseCase(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user('boss', password='pw-strong-1', is_staff=True)
+        self.worker = User.objects.create_user('worker', password='pw-strong-2')
+        self.item = Item.objects.create(sku='A-1', name='상품A', quantity=5)
+        self.other = Item.objects.create(sku='B-1', name='상품B', quantity=1)
+
+
+class AuthTests(BaseCase):
+    def test_anonymous_is_rejected(self):
+        for url in (ITEMS, SERIALS, POS, '/api/inventory/logs/', '/api/inventory/ledger/', '/api/inventory/dashboard/'):
+            self.assertEqual(self.client.get(url).status_code, 401, url)
+
+    def test_login_returns_role_from_account(self):
+        res = self.client.post('/api/token/', {'username': 'boss', 'password': 'pw-strong-1'})
+        self.assertEqual(res.data['role'], '관리자')
+        res = self.client.post('/api/token/', {'username': 'worker', 'password': 'pw-strong-2'})
+        self.assertEqual(res.data['role'], '현장작업자')
+
+    def test_token_refresh(self):
+        res = self.client.post('/api/token/', {'username': 'boss', 'password': 'pw-strong-1'})
+        res = self.client.post('/api/token/refresh/', {'refresh': res.data['refresh']})
+        self.assertEqual(res.status_code, 200)
+
+    def test_any_staff_account_is_admin(self):
+        # 사용자 이름이 admin이 아니어도 관리자 계정이면 변경할 수 있어야 합니다.
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'name': '변경'}).status_code, 200)
+
+    def test_worker_cannot_change_master_data(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(ITEMS).status_code, 200)
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'quantity': 999}).status_code, 403)
+        self.assertEqual(self.client.delete(f'{ITEMS}{self.item.id}/').status_code, 403)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 5}).status_code, 403)
+        self.assertEqual(self.client.post(POS, {'po_number': 'X'}).status_code, 403)
+        self.assertEqual(self.client.get('/api/inventory/ledger/').status_code, 403)
+
+
+class StockTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.worker)
+
+    def test_adjust_stock_cannot_go_negative(self):
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -6}).status_code, 400)
+        res = self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -5})
+        self.assertEqual(res.data['quantity'], 0)
+
+    def test_negative_quantity_rejected(self):
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'quantity': -1}).status_code, 400)
+        self.assertEqual(self.client.post(ITEMS, {'sku': 'N', 'name': 'n', 'quantity': -1}).status_code, 400)
+
+    def test_database_blocks_negative_quantity(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Item.objects.filter(pk=self.item.pk).update(quantity=-1)
+
+    def test_audit_log_description(self):
+        self.client.force_authenticate(self.admin)
+        self.client.patch(f'{ITEMS}{self.item.id}/', {'quantity': 4, 'physicalQty': 4}, format='json')
+        self.assertEqual(InventoryLog.objects.get(item=self.item).description, '월말 재고 실사 조정')
+
+
+class ScanTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.worker)
+
+    def scan(self, **data):
+        return self.client.post(f'{ITEMS}scan_serial/', data, format='json')
+
+    def test_invalid_type_is_400_not_500(self):
+        self.assertEqual(self.scan(sku='A-1', serial_number='S1', type='zzz').status_code, 400)
+
+    def test_missing_serial_is_400(self):
+        self.assertEqual(self.scan(sku='A-1', type='in').status_code, 400)
+
+    def test_in_and_out(self):
+        self.assertEqual(self.scan(sku='A-1', serial_number='S1', type='in').status_code, 200)
+        self.assertEqual(self.scan(sku='A-1', serial_number='S1', type='in').status_code, 400)
+        self.assertEqual(self.scan(sku='A-1', serial_number='S1', type='out').status_code, 200)
+        self.assertEqual(self.scan(sku='A-1', serial_number='S1', type='out').status_code, 400)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)
+
+
+class PurchaseOrderTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.po = PurchaseOrder.objects.create(po_number='PO-1')
+        self.line = PurchaseOrderItem.objects.create(po=self.po, item=self.item, order_quantity=2)
+        self.client.force_authenticate(self.worker)
+
+    def receive(self, **data):
+        return self.client.post(f'{POS}{self.po.id}/receive_inbound/', data, format='json')
+
+    def test_receive_until_complete(self):
+        self.assertEqual(self.receive(sku='A-1', quantity=1).data['status'], '입고중')
+        self.assertEqual(self.receive(sku='A-1', quantity=1).data['status'], '입고완료')
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 7)
+
+    def test_rejects_invalid_and_over_receipt(self):
+        for qty in (-1, 0, 'abc', 3):
+            self.assertEqual(self.receive(sku='A-1', quantity=qty).status_code, 400, qty)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)
+
+    def test_completed_po_is_closed(self):
+        self.receive(sku='A-1', quantity=2)
+        self.assertEqual(self.receive(sku='A-1', quantity=1).status_code, 400)
+
+
+class SerialTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.serial = ItemSerial.objects.create(item=self.item, serial_number='S1', status='재고보유')
+
+    def test_batch_update_syncs_stock(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(f'{SERIALS}batch_update/', {'ids': [self.serial.id], 'status': 'AS진행중', 'quality': '양품B급'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.serial.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual((self.serial.status, self.serial.quality, self.item.quantity), ('AS진행중', '양품B급', 4))
+
+    def test_batch_update_rejects_bad_values(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(f'{SERIALS}batch_update/', {'ids': [self.serial.id], 'status': '없는상태'}, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_batch_update_is_admin_only(self):
+        self.client.force_authenticate(self.worker)
+        res = self.client.patch(f'{SERIALS}batch_update/', {'ids': [self.serial.id], 'status': 'AS진행중'}, format='json')
+        self.assertEqual(res.status_code, 403)
+
+
+class CsvTests(BaseCase):
+    def upload(self, content, name='a.csv'):
+        self.client.force_authenticate(self.admin)
+        return self.client.post(f'{ITEMS}upload_csv/', {'file': SimpleUploadedFile(name, content)}, format='multipart')
+
+    def test_excel_utf8_bom_and_cp949(self):
+        for sku, encoding in (('C-1', 'utf-8-sig'), ('C-2', 'cp949')):
+            res = self.upload(f'SKU,상품명,초기수량\n{sku},이름,3\n'.encode(encoding))
+            self.assertEqual(res.status_code, 200, encoding)
+            self.assertEqual(Item.objects.get(sku=sku).name, '이름')
+
+    def test_skips_invalid_rows(self):
+        res = self.upload('SKU,상품명,초기수량\nD-1,이름,-5\nD-2,이름,abc\nA-1,중복,1\nD-3,정상,1\n'.encode())
+        self.assertIn('1건', res.data['message'])
+        self.assertIn('3건', res.data['message'])
+
+    def test_missing_header(self):
+        self.assertEqual(self.upload('a,b\n1,2\n'.encode()).status_code, 400)
+
+    def test_size_limit(self):
+        self.assertEqual(self.upload(b'x' * (5 * 1024 * 1024 + 1)).status_code, 400)
+
+
+class ReportTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def log_at(self, y, m, d, h, qty):
+        log = InventoryLog.objects.create(item=self.item, action='IN' if qty > 0 else 'OUT', quantity_changed=qty)
+        InventoryLog.objects.filter(pk=log.pk).update(timestamp=timezone.make_aware(datetime(y, m, d, h)))
+
+    def test_ledger_uses_korean_day_boundary(self):
+        self.log_at(2026, 10, 1, 8, 10)  # 한국 시간 10월 1일 오전 8시 (UTC로는 9월 30일)
+        self.log_at(2026, 9, 30, 23, 1)
+        self.log_at(2026, 10, 1, 9, -4)
+        res = self.client.get('/api/inventory/ledger/', {'start_date': '2026-10-01', 'end_date': '2026-10-01'})
+        row = next(r for r in res.data if r['sku'] == 'A-1')
+        self.assertEqual((row['opening_qty'], row['inbound_qty'], row['outbound_qty'], row['closing_qty']), (1, 10, 4, 7))
+
+    def test_ledger_bad_params(self):
+        for params in ({'start_date': '2026-13-45'}, {'start_date': 'abc'}, {'category': 'abc'}):
+            self.assertEqual(self.client.get('/api/inventory/ledger/', params).status_code, 400, params)
+
+    def test_dashboard(self):
+        loc = WarehouseLocation.objects.create(zone='A', rack='1')
+        Item.objects.filter(pk=self.item.pk).update(location=loc)
+        InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=3)
+        res = self.client.get('/api/inventory/dashboard/')
+        self.assertEqual(res.data['trend'][0]['inbound'], 3)
+        self.assertEqual(res.data['occupancy'], [{'zone': 'A', 'quantity': 5}])
+
+    def test_dashboard_trend_uses_korean_day(self):
+        now = timezone.localtime().replace(hour=8, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        previous_night = now - timedelta(hours=9)  # 전날 밤 23시
+        for moment, qty in ((now, 7), (previous_night, 2), (now, -3)):
+            log = InventoryLog.objects.create(item=self.item, action='IN' if qty > 0 else 'OUT', quantity_changed=qty)
+            InventoryLog.objects.filter(pk=log.pk).update(timestamp=moment)
+        rows = {r['date']: r for r in self.client.get('/api/inventory/dashboard/').data['trend']}
+        self.assertEqual(rows[now.strftime('%Y-%m-%d')], {'date': now.strftime('%Y-%m-%d'), 'inbound': 7, 'outbound': 3})
+        self.assertEqual(rows[previous_night.strftime('%Y-%m-%d')]['inbound'], 2)
+
+    def test_abc_analysis(self):
+        InventoryLog.objects.create(item=self.item, action='OUT', quantity_changed=-9)
+        InventoryLog.objects.create(item=self.other, action='OUT', quantity_changed=-1)
+        self.assertEqual(self.client.post(f'{ITEMS}analyze_abc/').status_code, 200)
+        self.item.refresh_from_db()
+        self.other.refresh_from_db()
+        self.assertEqual(self.other.abc_grade, 'C')
+
+
+class WebhookTests(BaseCase):
+    @patch('inventory.views.requests.post')
+    def test_no_webhook_without_url(self, post):
+        self.client.force_authenticate(self.admin)
+        with self.settings(ALERT_WEBHOOK_URL=''), self.captureOnCommitCallbacks(execute=True):
+            self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -5})
+        post.assert_not_called()
+
+    @patch('inventory.views.requests.post')
+    def test_webhook_sent_after_commit(self, post):
+        self.client.force_authenticate(self.admin)
+        with self.settings(ALERT_WEBHOOK_URL='https://example.test/hook'), self.captureOnCommitCallbacks(execute=True):
+            self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -5})
+        post.assert_called_once()
+
+
+class SalesOrderTests(BaseCase):
+    def make_order(self, *lines):
+        self.client.force_authenticate(self.admin)
+        return self.client.post(ORDERS, {'customer': '고객사', 'items': list(lines)}, format='json')
+
+    def line(self, item, quantity):
+        return {'item': item.id, 'quantity': quantity}
+
+    def test_create_assigns_number_and_creator(self):
+        res = self.make_order(self.line(self.item, 2))
+        self.assertEqual(res.status_code, 201)
+        self.assertRegex(res.data['order_no'], r'^ORD-\d{8}-0001$')
+        self.assertEqual(res.data['status'], '출고대기')
+        self.assertEqual(SalesOrder.objects.get().created_by, self.admin)
+        self.assertRegex(self.make_order(self.line(self.item, 1)).data['order_no'], r'-0002$')
+
+    def test_create_validation(self):
+        for lines in ([], [self.line(self.item, 0)], [self.line(self.item, 1), self.line(self.item, 2)], [{'item': 99999, 'quantity': 1}]):
+            self.assertEqual(self.make_order(*lines).status_code, 400, lines)
+        self.assertFalse(SalesOrder.objects.exists())
+
+    def test_worker_cannot_create_or_cancel_but_can_complete(self):
+        order_id = self.make_order(self.line(self.item, 2)).data['id']
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(ORDERS, {'customer': 'x', 'items': [self.line(self.item, 1)]}, format='json').status_code, 403)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/cancel/').status_code, 403)
+        self.assertEqual(self.client.get(ORDERS).status_code, 200)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 200)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 3)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 400)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 3)
+
+    def test_complete_is_all_or_nothing(self):
+        order_id = self.make_order(self.line(self.item, 2), self.line(self.other, 9)).data['id']
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 400)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)
+        self.assertFalse(InventoryLog.objects.exists())
+        self.assertEqual(SalesOrder.objects.get().status, '출고대기')
+
+    def test_cancelled_order_cannot_ship(self):
+        order_id = self.make_order(self.line(self.item, 1)).data['id']
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/cancel/').status_code, 200)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 400)
+
+    def test_status_filter_and_no_edit(self):
+        order_id = self.make_order(self.line(self.item, 1)).data['id']
+        self.assertEqual(len(self.client.get(ORDERS, {'status': '출고대기'}).data), 1)
+        self.assertEqual(len(self.client.get(ORDERS, {'status': '출고완료'}).data), 0)
+        self.assertEqual(self.client.delete(f'{ORDERS}{order_id}/').status_code, 405)
+
+
+class PurchaseOrderCreateTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.supplier = Supplier.objects.create(name='공급사')
+        self.client.force_authenticate(self.admin)
+
+    def make(self, lines, supplier=None):
+        return self.client.post(POS, {'supplier': supplier or self.supplier.id, 'items': lines}, format='json')
+
+    def test_create_then_receive(self):
+        res = self.make([{'item': self.item.id, 'order_quantity': 3}])
+        self.assertEqual(res.status_code, 201)
+        self.assertRegex(res.data['po_number'], r'^PO-\d{8}-0001$')
+        self.assertEqual(res.data['items'][0]['item_sku'], 'A-1')
+        self.client.force_authenticate(self.worker)
+        res = self.client.post(f"{POS}{res.data['id']}/receive_inbound/", {'sku': 'A-1', 'quantity': 3}, format='json')
+        self.assertEqual(res.data['status'], '입고완료')
+
+    def test_create_validation(self):
+        for lines in ([], [{'item': self.item.id, 'order_quantity': 0}], [{'item': self.item.id, 'order_quantity': 1}, {'item': self.item.id, 'order_quantity': 1}]):
+            self.assertEqual(self.make(lines).status_code, 400, lines)
+        self.assertEqual(self.make([{'item': self.item.id, 'order_quantity': 1}], supplier=99999).status_code, 400)
+
+    def test_cannot_set_received_quantity_on_create(self):
+        res = self.make([{'item': self.item.id, 'order_quantity': 3, 'received_quantity': 3}])
+        self.assertEqual(res.data['items'][0]['received_quantity'], 0)
+
+    def test_cancel_only_before_receiving(self):
+        po_id = self.make([{'item': self.item.id, 'order_quantity': 2}]).data['id']
+        self.client.post(f'{POS}{po_id}/receive_inbound/', {'sku': 'A-1', 'quantity': 1}, format='json')
+        self.assertEqual(self.client.post(f'{POS}{po_id}/cancel/').status_code, 400)
+        po_id = self.make([{'item': self.item.id, 'order_quantity': 2}]).data['id']
+        self.assertEqual(self.client.post(f'{POS}{po_id}/cancel/').status_code, 200)
+        self.assertEqual(self.client.post(f'{POS}{po_id}/receive_inbound/', {'sku': 'A-1', 'quantity': 1}, format='json').status_code, 400)
+
+
+class ReturnOrderTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.serial = ItemSerial.objects.create(item=self.item, serial_number='S1', status='출고완료')
+        self.client.force_authenticate(self.admin)
+
+    def make(self):
+        return self.client.post(RETURNS, {'customer': '고객', 'reason': '단순변심', 'serial': self.serial.id}, format='json')
+
+    def test_create_rules(self):
+        res = self.make()
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data['serial_number'], 'S1')
+        self.assertEqual(self.make().status_code, 400)
+        ItemSerial.objects.filter(pk=self.serial.pk).update(status='재고보유')
+        ReturnOrder.objects.all().delete()
+        self.assertEqual(self.make().status_code, 400)
+
+    def test_complete_restocks_once(self):
+        return_id = self.make().data['id']
+        self.client.force_authenticate(self.worker)
+        url = f'{RETURNS}{return_id}/complete/'
+        self.assertEqual(self.client.post(url, {'status': '재고보유', 'quality': '양품A급'}, format='json').status_code, 200)
+        self.item.refresh_from_db()
+        self.serial.refresh_from_db()
+        self.assertEqual((self.item.quantity, self.serial.status, self.serial.quality), (6, '재고보유', '양품A급'))
+        self.assertEqual(self.client.post(url, {'status': '재고보유'}, format='json').status_code, 400)
+
+    def test_defective_does_not_restock(self):
+        return_id = self.make().data['id']
+        self.client.post(f'{RETURNS}{return_id}/complete/', {'status': '불량폐기', 'quality': '사용불가', 'detail': '파손'}, format='json')
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)
+        self.assertEqual(ReturnOrder.objects.get().status, '회수완료')
+
+    def test_worker_cannot_register(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.make().status_code, 403)
+
+
+class LogQueryTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        InventoryLog.objects.bulk_create([
+            InventoryLog(item=self.item if i % 2 else self.other, action='IN' if i % 3 else 'OUT', quantity_changed=1 if i % 3 else -1)
+            for i in range(120)
+        ])
+
+    def test_paginated_by_default(self):
+        res = self.client.get(LOGS)
+        self.assertEqual((res.data['count'], len(res.data['results'])), (120, 50))
+        self.assertIsNotNone(res.data['next'])
+        self.assertEqual(len(self.client.get(LOGS, {'page_size': 9999}).data['results']), 120)
+
+    def test_query_count_does_not_grow_with_rows(self):
+        # 저장점 2개 + 건수 1개 + 목록 1개. 행 수와 상품 수에 따라 늘어나지 않아야 합니다.
+        with self.assertNumQueries(4):
+            self.client.get(LOGS)
+
+    def test_filters(self):
+        self.assertEqual(self.client.get(LOGS, {'item': self.item.id}).data['count'], 60)
+        self.assertEqual(self.client.get(LOGS, {'action': 'OUT'}).data['count'], 40)
+        self.assertEqual(self.client.get(LOGS, {'search': 'B-1'}).data['count'], 60)
+        self.assertEqual(self.client.get(LOGS, {'search': '상품A'}).data['count'], 60)
+        self.assertEqual(self.client.get(LOGS, {'start_date': '2000-01-01', 'end_date': '2000-01-02'}).data['count'], 0)
+
+    def test_bad_params(self):
+        self.assertEqual(self.client.get(LOGS, {'start_date': 'abc'}).status_code, 400)
+        self.assertEqual(self.client.get(LOGS, {'item': 'abc'}).status_code, 400)
+
+    def test_export_all_rows_and_blocks_formula(self):
+        evil = Item.objects.create(sku='=cmd', name='@evil', quantity=0)
+        InventoryLog.objects.create(item=evil, action='NEW', quantity_changed=0)
+        res = self.client.get(f'{LOGS}export/')
+        text = b''.join(res.streaming_content).decode('utf-8-sig')
+        self.assertEqual(len(text.strip().splitlines()), 122)
+        self.assertIn("'=cmd", text)
+        self.assertIn("'@evil", text)
+
+    def test_export_is_admin_only(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(f'{LOGS}export/').status_code, 403)
+
+    def test_dashboard_summary(self):
+        res = self.client.get('/api/inventory/dashboard/')
+        self.assertEqual(res.data['today_count'], 120)
+        self.assertEqual(res.data['top_moving'][0]['movements'], 60)
+
+
+class ItemDeleteTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_stock_blocks_delete(self):
+        self.assertEqual(self.client.delete(f'{ITEMS}{self.item.id}/').status_code, 400)
+        self.assertTrue(Item.objects.get(pk=self.item.pk).is_active)
+
+    def test_delete_keeps_history(self):
+        Item.objects.filter(pk=self.item.pk).update(quantity=0)
+        InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=1)
+        self.assertEqual(self.client.delete(f'{ITEMS}{self.item.id}/').status_code, 204)
+        self.assertEqual(InventoryLog.objects.filter(item=self.item).count(), 2)
+        self.assertEqual([i['sku'] for i in self.client.get(ITEMS).data], ['B-1'])
+
+    def test_open_order_blocks_delete(self):
+        Item.objects.filter(pk=self.item.pk).update(quantity=0)
+        order = SalesOrder.objects.create(order_no='O', customer='c')
+        SalesOrderItem.objects.create(order=order, item=self.item, quantity=1)
+        self.assertEqual(self.client.delete(f'{ITEMS}{self.item.id}/').status_code, 400)
+
+    def test_reregister_stopped_sku(self):
+        Item.objects.filter(pk=self.item.pk).update(quantity=0, is_active=False)
+        res = self.client.post(ITEMS, {'sku': 'A-1', 'name': '다시', 'quantity': 3})
+        self.assertEqual(res.status_code, 201)
+        self.item.refresh_from_db()
+        self.assertEqual((self.item.is_active, self.item.name, self.item.quantity), (True, '다시', 3))

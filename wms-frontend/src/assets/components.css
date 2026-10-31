@@ -1,0 +1,291 @@
+/*
+  WMS 공통 UI 규격
+  색상, 글자 크기, 높이 값은 tailwind.css의 @theme에서 정의합니다.
+  특정 화면만 다르게 하려면 class="btn ml-2"처럼 Tailwind 클래스를 함께 쓰면 됩니다.
+*/
+@layer base {
+  body {
+    margin: 0;
+  }
+}
+
+@layer components {
+  /* ---------- 화면 레이아웃 ---------- */
+  /* <div class="page"> : 세로로 쌓는 기본 화면 */
+  .page {
+    @apply flex flex-col gap-2.5 h-full;
+  }
+
+  /* <div class="page-split"> : PC는 좌우 분할, 모바일은 세로 배치 */
+  .page-split {
+    @apply flex flex-col md:flex-row gap-2.5 h-full;
+  }
+
+  /* ---------- 패널 ---------- */
+  /*
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">제목</span> <button class="btn btn-sm">...</button></div>
+      <div class="panel-body">내용</div>
+    </div>
+  */
+  .panel {
+    @apply flex flex-col min-w-0 bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)];
+  }
+
+  .panel-header {
+    @apply flex justify-between items-center gap-2 min-h-[34px] px-2.5 py-1 box-border shrink-0 bg-surface-panel border-b border-line-strong text-ink text-body;
+  }
+
+  .panel-title {
+    @apply font-bold text-title truncate;
+  }
+
+  .panel-body {
+    @apply flex-1 min-h-0 p-2.5 overflow-y-auto text-body;
+  }
+
+  /* 표를 패널 가장자리까지 꽉 채울 때 */
+  .panel-body-flush {
+    @apply flex-1 min-h-0 overflow-y-auto text-body;
+  }
+
+  /* ---------- 버튼 ---------- */
+  /*
+    종류: btn(기본), btn-primary(주요 실행), btn-success(등록/확정), btn-warning(주의), btn-danger(삭제), btn-link(글자형)
+    크기: btn-sm(표 안), 기본, btn-lg(모달/스캔), btn-block(가로 전체)
+  */
+  .btn {
+    @apply inline-flex justify-center items-center h-control px-2.5 box-border whitespace-nowrap cursor-pointer text-body font-bold text-ink bg-surface-head border border-line-strong hover:bg-surface-active focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary;
+    font-family: inherit;
+  }
+
+  .btn-primary {
+    @apply text-white bg-primary border-primary-dark hover:bg-primary-hover;
+  }
+
+  .btn-success {
+    @apply text-white bg-success border-success-dark hover:bg-success-hover;
+  }
+
+  .btn-warning {
+    @apply text-white bg-warning border-warning-dark hover:bg-warning-hover;
+  }
+
+  .btn-danger {
+    @apply text-white bg-danger border-danger-dark hover:bg-danger-hover;
+  }
+
+  .btn-link {
+    @apply h-auto px-0.5 font-normal text-primary bg-transparent border-transparent hover:bg-transparent hover:underline;
+  }
+
+  .btn-sm {
+    @apply h-control-sm px-2 text-caption;
+  }
+
+  .btn-lg {
+    @apply h-control-lg px-4;
+  }
+
+  .btn-block {
+    @apply flex w-full;
+  }
+
+  .btn:disabled {
+    @apply cursor-not-allowed text-disabled-ink bg-disabled border-line;
+  }
+
+  /* ---------- 입력창 ---------- */
+  /*
+    input, select, textarea 공통: class="field"
+    폭은 w-full, w-[150px]처럼 함께 지정합니다.
+    변형: field-sm(작게), field-lg(모달 등), field-num(숫자 오른쪽 정렬), field-scan(바코드 스캔)
+  */
+  .field {
+    @apply h-control px-1 box-border text-body text-ink bg-white border border-line-strong outline-none focus:border-primary focus:bg-primary-soft disabled:cursor-not-allowed disabled:text-disabled-ink disabled:bg-disabled;
+    font-family: inherit;
+  }
+
+  textarea.field {
+    @apply h-auto py-1;
+  }
+
+  .field-sm {
+    @apply h-control-sm;
+  }
+
+  .field-lg {
+    @apply h-control-lg;
+  }
+
+  .field-num {
+    @apply text-right font-bold;
+  }
+
+  .field-scan {
+    @apply h-control-lg font-bold text-heading bg-highlight border-2 border-primary focus:bg-highlight;
+  }
+
+  .field-label {
+    @apply font-bold text-ink text-body;
+  }
+
+  /* <form class="toolbar"> : 입력창과 버튼을 한 줄로 배치 */
+  .toolbar {
+    @apply flex flex-wrap items-center gap-1.5 text-body;
+  }
+
+  /* <div class="scan-box"> : 바코드 스캔 입력 영역 */
+  .scan-box {
+    @apply p-2.5 mb-2.5 text-body bg-highlight border-2 border-highlight-line;
+  }
+
+  /* ---------- 데이터 표 ---------- */
+  /*
+    <table class="data-table">
+    행 상태(tr): is-selected(선택됨), row-success, row-warning, row-danger, row-muted, is-clickable(클릭 가능)
+    데이터 없음: <tr class="empty-row"><td colspan="7">조회된 상품이 없습니다.</td></tr>
+    셀 정렬은 text-right, font-mono, truncate를 함께 사용합니다.
+  */
+  .data-table {
+    @apply w-full table-fixed border-collapse text-body text-ink;
+  }
+
+  .data-table th {
+    @apply sticky top-0 z-10 px-1.5 py-1.5 text-center font-bold bg-surface-head border border-line border-t-0 shadow-[0_1px_0_var(--color-line-strong)];
+  }
+
+  .data-table td {
+    @apply px-1.5 py-1.5 align-middle border border-line;
+  }
+
+  /* 대시보드처럼 좁은 영역의 표 */
+  .data-table-sm th,
+  .data-table-sm td {
+    @apply px-1 py-1;
+  }
+
+  .data-table tbody tr:hover {
+    @apply bg-primary-soft;
+  }
+
+  .data-table tbody tr.is-clickable {
+    @apply cursor-pointer;
+  }
+
+  .data-table tbody tr.is-selected {
+    @apply font-bold bg-primary-soft;
+  }
+
+  .data-table tbody tr.row-success {
+    @apply bg-success-soft;
+  }
+
+  .data-table tbody tr.row-warning {
+    @apply bg-warning-soft;
+  }
+
+  .data-table tbody tr.row-danger {
+    @apply bg-danger-soft;
+  }
+
+  .data-table tbody tr.row-muted {
+    @apply text-disabled-ink bg-surface-head;
+  }
+
+  .data-table tbody tr.empty-row td {
+    @apply p-3 text-center font-bold text-muted;
+  }
+
+  /* ---------- 입력 양식 표 ---------- */
+  /* <table class="form-table"> : th(항목명) + td(입력창) 구조의 검색/등록 영역 */
+  .form-table {
+    @apply w-full border-collapse text-body text-ink;
+  }
+
+  .form-table th {
+    @apply w-[100px] px-2 py-1 text-right font-bold bg-surface-head border border-line;
+  }
+
+  .form-table td {
+    @apply px-2 py-1 border border-line;
+  }
+
+  /* ---------- 안내 메시지 ---------- */
+  /* <div class="alert alert-info"> : alert-info, alert-success, alert-warning, alert-danger */
+  .alert {
+    @apply p-2 mb-2.5 font-bold text-body border;
+  }
+
+  .alert-info {
+    @apply text-primary bg-primary-soft border-primary;
+  }
+
+  .alert-success {
+    @apply text-success bg-success-soft border-success;
+  }
+
+  .alert-warning {
+    @apply text-warning bg-warning-soft border-warning;
+  }
+
+  .alert-danger {
+    @apply text-danger bg-danger-soft border-danger;
+  }
+
+  /* ---------- 모달 ---------- */
+  /*
+    <div class="modal-overlay" @click.self="닫기">
+      <div class="modal w-[450px]">
+        <div class="modal-header">제목</div>
+        <div class="modal-content">내용</div>
+        <div class="modal-footer"><button class="btn btn-primary btn-lg">확정</button></div>
+      </div>
+    </div>
+  */
+  .modal-overlay {
+    @apply fixed inset-0 z-1000 flex justify-center items-center bg-black/50;
+  }
+
+  .modal {
+    @apply flex flex-col max-w-[95vw] max-h-[90vh] bg-white border border-black shadow-lg;
+  }
+
+  .modal-header {
+    @apply px-2.5 py-1.5 shrink-0 font-bold text-title text-white bg-primary;
+  }
+
+  .modal-content {
+    @apply flex-1 min-h-0 p-4 overflow-y-auto text-body;
+  }
+
+  .modal-footer {
+    @apply flex justify-center gap-1.5 p-2 shrink-0 bg-surface-head border-t border-line;
+  }
+
+  /* ---------- 내비게이션 ---------- */
+  /*
+    사이드 메뉴: <li class="menu-group">그룹명</li>, <a class="menu-link" :class="{ 'is-active': 조건 }">
+    탭: <div class="tab" :class="{ 'is-active': 조건 }">
+  */
+  .menu-group {
+    @apply px-2.5 py-1.5 font-bold bg-[#dcdcdc] border-y border-b-line border-t-white;
+  }
+
+  .menu-link {
+    @apply block px-[15px] py-2 text-ink text-body no-underline border-b border-[#e0e0e0] hover:bg-[#eef5f9];
+  }
+
+  .menu-link.is-active {
+    @apply font-bold text-white bg-primary;
+  }
+
+  .tab {
+    @apply flex items-center h-control min-w-[120px] px-2.5 box-border cursor-pointer text-body bg-[#dcdcdc] border border-b-0 border-line-strong rounded-t hover:bg-surface-panel;
+    font-family: inherit;
+  }
+
+  .tab.is-active {
+    @apply z-[2] -mb-px font-bold text-primary bg-white border-b-white shadow-[inset_0_2px_0_0_var(--color-primary)];
+  }
+}

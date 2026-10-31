@@ -1,0 +1,296 @@
+<template>
+  <div class="page">
+    <div class="panel p-1.5">
+      <table class="form-table">
+        <tbody>
+          <tr>
+            <th>상품/SKU 검색</th>
+            <td><input v-model="searchQuery" type="text"
+                class="field w-full"
+                placeholder="상품명 또는 SKU 검색" /></td>
+            <th>카테고리 필터</th>
+            <td>
+              <select v-model="selectedCategory"
+                class="field w-full">
+                <option value="전체">전체 카테고리</option>
+                <option v-for="cat in categories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
+              </select>
+            </td>
+            <td class="text-right">
+              <button
+                class="btn btn-primary"
+                @click="fetchItems">새로고침</button>
+            </td>
+          </tr>
+          <tr>
+            <th>상품 수동 등록</th>
+            <td colspan="4">
+              <form @submit.prevent="handleAddItem" class="flex items-center gap-1.5">
+                SKU: <input v-model="newItemForm.sku"
+                  class="field w-[120px]" required
+                  placeholder="SKU 입력" />
+                상품명: <input v-model="newItemForm.name"
+                  class="field w-[180px]" required
+                  placeholder="상품명 입력" />
+                카테고리: <select v-model="newItemForm.category" class="field w-[120px]">
+                  <option :value="null">미분류</option>
+                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                </select>
+                <button type="button" class="btn" @click="addCategory">추가</button>
+                수량: <input type="number" v-model="newItemForm.quantity"
+                  class="field field-num w-[60px]" required />
+                <button type="submit"
+                  class="btn btn-success ml-2">신규
+                  등록</button>
+
+                <input type="file" ref="csvInput" accept=".csv" class="hidden" @change="handleCsvUpload" />
+                <button type="button" @click="$refs.csvInput.click()"
+                  class="btn btn-warning ml-1">CSV
+                  일괄 업로드</button>
+                <!-- 🌟 NEW: ABC 분석 실행 버튼 -->
+                <button type="button" @click="runABCAnalysis"
+                  class="btn btn-primary ml-1">ABC
+                  분석 실행</button>
+              </form>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div
+      class="panel flex-1 overflow-hidden mt-2.5">
+      <div class="panel-header">
+        <span class="panel-title">상품 마스터 관리 목록</span>
+        <span class="text-body">총 <strong>{{ filteredItems.length }}</strong> 개 상품</span>
+      </div>
+
+      <div class="panel-body-flush">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th
+               
+                width="120">SKU</th>
+              <th
+               >
+                상품명</th>
+              <th
+               
+                width="150">카테고리</th>
+              <!-- 🌟 NEW: ABC 등급 표시 컬럼 -->
+              <th
+                class="text-primary"
+                width="60">ABC</th>
+              <th
+               
+                width="80">현재수량</th>
+              <th
+               
+                width="180">로케이션</th>
+              <th
+               
+                width="120">관리 도구</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="filteredItems.length === 0">
+              <td colspan="7" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다.</td>
+            </tr>
+            <tr v-for="item in filteredItems" :key="item.id">
+              <td class="text-center font-mono font-bold">{{ item.sku }}</td>
+              <td class="font-bold">{{ item.name }}</td>
+              <td class="text-center">{{ getCategoryName(item.category) }}</td>
+              <!-- 🌟 NEW: ABC 등급 데이터 -->
+              <td class="text-center font-bold"
+                :class="{ 'text-danger': item.abc_grade === 'C', 'text-success': item.abc_grade === 'A' }">{{
+                  item.abc_grade || '-' }}</td>
+              <td class="text-right font-bold"
+                :class="{ 'text-danger': item.quantity === 0 }">{{ item.quantity.toLocaleString() }}</td>
+              <td class="text-center font-mono">{{ getLocationName(item.location) }}
+              </td>
+              <td class="text-center flex justify-center gap-1">
+                <button
+                  class="btn btn-success btn-sm"
+                  @click="openTransferModal(item)">위치이동</button>
+                <button
+                  class="btn btn-danger btn-sm"
+                  @click="deleteItem(item.id)">삭제</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 로케이션 이동 모달 -->
+    <div v-if="isTransferModalOpen" class="modal-overlay"
+      @click.self="closeTransferModal">
+      <div class="modal w-[450px]">
+        <div class="modal-header">로케이션(위치) 이동</div>
+        <div class="modal-content">
+          <div class="bg-[#eff6ff] border border-[#bfdbfe] text-[#1e40af] p-3 mb-4 text-sm font-bold">대상 상품: {{
+            selectedItem?.name }} <span class="font-mono">({{ selectedItem?.sku }})</span></div>
+          <div class="flex flex-col gap-2">
+            <label class="font-bold text-[#374151] text-xs">이동할 목표 로케이션 선택</label>
+            <select v-model="selectedLocationId"
+              class="field field-lg">
+              <option value="" disabled>== 창고 구역 선택 ==</option>
+              <option v-for="loc in locations" :key="loc.id" :value="loc.id">{{ loc.zone }}동 - {{ loc.rack }}열 - {{
+                loc.tier }}단 {{ loc.cell ? '(' + loc.cell + ')' : '' }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="submitTransfer"
+            class="btn btn-primary btn-lg"
+            :disabled="!selectedLocationId">이동 확정</button>
+          <button @click="closeTransferModal"
+            class="btn btn-lg">취소</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onActivated } from 'vue';
+import axios from 'axios';
+import { useToastStore } from '../../stores/toastStore';
+import { apiErrorMessage } from '../../utils/apiError';
+
+const items = ref([]);
+const locations = ref([]);
+const categories = ref([]);
+const searchQuery = ref('');
+const selectedCategory = ref('전체');
+
+const isTransferModalOpen = ref(false);
+const selectedItem = ref(null);
+const selectedLocationId = ref('');
+const newItemForm = ref({ sku: '', name: '', quantity: 0, category: null });
+const toast = useToastStore();
+const csvInput = ref(null);
+
+const fetchItems = async () => {
+  try {
+    const res = await axios.get('/api/inventory/items/');
+    items.value = res.data;
+  } catch (err) { console.error(err); }
+};
+
+const fetchLocations = async () => {
+  try {
+    const res = await axios.get('/api/inventory/locations/');
+    locations.value = res.data;
+  } catch (err) { console.error(err); }
+};
+
+const fetchCategories = async () => {
+  try {
+    const res = await axios.get('/api/inventory/categories/');
+    categories.value = res.data;
+  } catch (err) { console.error(err); }
+};
+
+const filteredItems = computed(() => {
+  return items.value.filter(item => {
+    const matchQuery = item.name.toLowerCase().includes(searchQuery.value.toLowerCase()) || item.sku.toLowerCase().includes(searchQuery.value.toLowerCase());
+    const catName = getCategoryName(item.category);
+    const matchCat = selectedCategory.value === '전체' || catName === selectedCategory.value;
+    return matchQuery && matchCat;
+  });
+});
+
+const getCategoryName = (catId) => {
+  if (!catId) return '미분류';
+  const cat = categories.value.find(c => c.id === catId);
+  return cat ? cat.name : '미분류';
+};
+
+const getLocationName = (locId) => {
+  if (!locId) return '미지정';
+  const loc = locations.value.find(l => l.id === locId);
+  if (loc) return loc.cell ? `${loc.zone}-${loc.rack}-${loc.tier}단-${loc.cell}` : `${loc.zone}-${loc.rack}-${loc.tier}단`;
+  return '미지정';
+};
+
+const addCategory = async () => {
+  const name = prompt('새 카테고리 이름을 입력하세요.')?.trim();
+  if (!name) return;
+  try {
+    const res = await axios.post('/api/inventory/categories/', { name });
+    await fetchCategories();
+    newItemForm.value.category = res.data.id;
+  } catch (err) { toast.addToast(apiErrorMessage(err, '카테고리 추가 중 오류가 발생했습니다.'), 'error'); }
+};
+
+const handleAddItem = async () => {
+  try {
+    await axios.post('/api/inventory/items/', newItemForm.value);
+    toast.addToast('상품이 신규 등록되었습니다.', 'success');
+    newItemForm.value = { sku: '', name: '', quantity: 0, category: null };
+    await fetchItems();
+  } catch (err) { toast.addToast(apiErrorMessage(err, '등록 실패 (SKU 중복 확인)'), 'error'); }
+};
+
+const deleteItem = async (id) => {
+  if (!confirm('정말 이 상품을 삭제하시겠습니까?')) return;
+  try {
+    await axios.delete(`/api/inventory/items/${id}/`);
+    toast.addToast('상품이 삭제되었습니다.', 'success');
+    await fetchItems();
+  } catch (err) { toast.addToast(apiErrorMessage(err, '삭제 중 오류가 발생했습니다.'), 'error', 5000); }
+};
+
+const openTransferModal = (item) => {
+  selectedItem.value = item;
+  selectedLocationId.value = '';
+  isTransferModalOpen.value = true;
+};
+
+const closeTransferModal = () => {
+  isTransferModalOpen.value = false;
+  selectedItem.value = null;
+  selectedLocationId.value = '';
+};
+
+const submitTransfer = async () => {
+  if (!selectedLocationId.value) return;
+  try {
+    await axios.post(`/api/inventory/items/${selectedItem.value.id}/transfer_location/`, { new_location_id: selectedLocationId.value });
+    toast.addToast('로케이션 이동이 완료되었습니다.', 'success');
+    closeTransferModal();
+    await fetchItems();
+  } catch (err) { toast.addToast('이동 실패', 'error'); }
+};
+
+const handleCsvUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await axios.post('/api/inventory/items/upload_csv/', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+    toast.addToast(res.data.message, 'success');
+    await fetchItems();
+  } catch (err) {
+    toast.addToast(err.response?.data?.error || 'CSV 업로드 중 오류가 발생했습니다.', 'error');
+  } finally { event.target.value = ''; }
+};
+
+// 🌟 NEW: 백엔드 ABC 분석 API 호출 함수
+const runABCAnalysis = async () => {
+  try {
+    const res = await axios.post('/api/inventory/items/analyze_abc/');
+    toast.addToast(res.data.message, 'success');
+    await fetchItems(); // 분석 후 테이블 갱신
+  } catch (err) {
+    toast.addToast('ABC 분석 중 오류가 발생했습니다.', 'error');
+  }
+};
+
+onActivated(async () => {
+  await Promise.all([fetchItems(), fetchLocations(), fetchCategories()]);
+});
+</script>
