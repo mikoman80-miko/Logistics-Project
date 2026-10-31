@@ -104,7 +104,7 @@
                   width="15%">순위</th>
                 <th
                  
-                  width="30%">SKU 코드</th>
+                  width="30%">상품코드</th>
                 <th
                  >
                   상품명</th>
@@ -165,7 +165,7 @@
                 width="100">구분</th>
               <th
                
-                width="150">SKU 코드</th>
+                width="150">상품코드</th>
               <th
                >
                 상품명</th>

@@ -29,7 +29,15 @@ class WarehouseLocation(models.Model):
         return self.full_code
 
 class Item(models.Model):
+    TYPE_CHOICES = [
+        ('상품', '상품'),
+        ('구성품', '구성품'),
+        ('부자재', '부자재'),
+        ('사은품', '사은품'),
+    ]
     sku = models.CharField(max_length=100, unique=True)
+    item_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='상품')
+    serial_tracked = models.BooleanField(default=True) # 켜면 입출고 때 시리얼을 스캔합니다. 상품별로 언제든 바꿀 수 있습니다.
     name = models.CharField(max_length=200)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='items')
     quantity = models.IntegerField(default=0)
@@ -115,6 +123,7 @@ class SalesOrderItem(models.Model):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='items')
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
     quantity = models.IntegerField()
+    picked_quantity = models.IntegerField(default=0) # 스캔으로 확인한 수량
 
     class Meta:
         constraints = [
@@ -151,6 +160,16 @@ class ItemSerial(models.Model):
 
     def __str__(self):
         return f"{self.item.name} - S/N: {self.serial_number}"
+
+class SalesOrderSerial(models.Model):
+    # 출고 스캔으로 주문 품목에 묶인 시리얼
+    line = models.ForeignKey(SalesOrderItem, on_delete=models.CASCADE, related_name='picked_serials')
+    serial = models.ForeignKey(ItemSerial, on_delete=models.PROTECT, related_name='order_picks')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['line', 'serial'], name='unique_line_serial'),
+        ]
 
 class ReturnOrder(models.Model):
     STATUS_CHOICES = [

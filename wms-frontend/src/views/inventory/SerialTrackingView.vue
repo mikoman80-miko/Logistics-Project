@@ -14,7 +14,7 @@
         </colgroup>
         <tbody>
           <tr>
-            <th>S/N 또는 SKU</th>
+            <th>시리얼 또는 상품코드</th>
             <td><input v-model="searchQuery" type="text"
                 class="field w-full"
                 placeholder="시리얼 번호 검색" /></td>
@@ -101,7 +101,7 @@
                 width="150">시리얼 번호 (S/N)</th>
               <th
                
-                width="120">SKU 코드</th>
+                width="120">상품코드</th>
               <th
                >
                 상품명</th>

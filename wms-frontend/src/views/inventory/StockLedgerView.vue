@@ -32,7 +32,7 @@
             <tr>
               <th
                
-                width="130">SKU 코드</th>
+                width="130">상품코드</th>
               <th
                >
                 상품명</th>
@@ -41,7 +41,7 @@
                 width="100">카테고리</th>
               <th
                
-                width="100">보관 로케이션</th>
+                width="100">보관 보관 위치</th>
               <th
                
                 width="90">기초재고</th>
@@ -121,10 +121,10 @@ const exportExcel = () => {
     return;
   }
   const excelData = ledgerList.value.map(row => ({
-    'SKU 코드': row.sku,
+    '상품코드': row.sku,
     '상품명': row.name,
     '카테고리': row.category_name,
-    '보관 로케이션': row.location,
+    '보관 보관 위치': row.location,
     '기초재고': row.opening_qty,
     '당기입고': row.inbound_qty,
     '당기출고': row.outbound_qty,

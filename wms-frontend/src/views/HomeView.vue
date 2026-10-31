@@ -1,7 +1,5 @@
 <template>
   <div class="page">
-    <ExcelPreviewModal v-if="selectedFile" :file="selectedFile" @close="closeExcelModal"
-      @success="handleExcelSuccess" />
 
     <!-- 단건 라벨 인쇄 모달 -->
     <div v-if="selectedBarcodeItem"
@@ -115,7 +113,7 @@
         </colgroup>
         <tbody>
           <tr>
-            <th>상품/SKU 검색</th>
+            <th>상품명/코드 검색</th>
             <td><input v-model="searchQuery" type="text"
                 class="field w-full" />
             </td>
@@ -143,7 +141,7 @@
             </td>
           </tr>
           <tr>
-            <th class="bg-primary-soft text-primary">바코드 시리얼 스캔</th>
+            <th class="bg-primary-soft text-primary">시리얼 직접 입출고</th>
             <td colspan="6">
               <div class="flex items-center gap-1.5">
                 <label><input type="radio" v-model="scanMode" value="in" /> 입고</label>
@@ -151,7 +149,7 @@
                 <form @submit.prevent="handleScan" class="inline-block ml-3.5">
                   <input ref="skuInputRef" v-model="scanSku" type="text"
                     class="field field-scan w-[180px]"
-                    placeholder="1. 상품코드(SKU) 스캔" required autocomplete="off"
+                    placeholder="1. 상품코드 스캔" required autocomplete="off"
                     @keydown.enter.prevent="focusSerialInput" />
                   <input ref="serialInputRef" v-model="scanSerialVal" type="text"
                     class="field field-scan w-[250px] ml-1.5"
@@ -161,34 +159,6 @@
                     실행</button>
                 </form>
               </div>
-            </td>
-          </tr>
-          <tr>
-            <th>상품 수동등록</th>
-            <td colspan="6">
-              <form @submit.prevent="handleAddItem" class="flex items-center gap-1.5">
-                SKU: <input v-model="newItemForm.sku"
-                  class="field w-[120px]"
-                  required />
-                상품명: <input v-model="newItemForm.name"
-                  class="field w-[200px]"
-                  required />
-                수량: <input type="number" v-model="newItemForm.quantity"
-                  class="field field-num w-[60px]"
-                  required />
-                구역: <select v-model="newItemForm.location" class="field w-[110px]">
-                  <option value="">미지정</option>
-                  <option v-for="loc in store.locations" :key="loc.id" :value="loc.id">{{ loc.full_code }}</option>
-                </select>
-                <button type="submit"
-                  class="btn btn-success ml-1.5">단건
-                  등록</button>
-                <span class="text-line mx-1 font-bold">|</span>
-                <input type="file" ref="fileInput" @change="handleFileUpload" accept=".csv" style="display:none" />
-                <button type="button"
-                  class="btn"
-                  @click="triggerFileInput">CSV 일괄 업로드</button>
-              </form>
             </td>
           </tr>
         </tbody>
@@ -236,7 +206,7 @@
                 width="30"><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th>
               <th
                
-                width="120">SKU 코드</th>
+                width="120">상품코드</th>
               <th
                >
                 상품명</th>
@@ -251,7 +221,7 @@
                 width="120">재고 조정</th>
               <th
                
-                width="150">관리 도구</th>
+                width="240">관리 도구</th>
             </tr>
           </thead>
           <tbody>
@@ -284,12 +254,15 @@
                 {{ item.quantity.toLocaleString() }}
               </td>
               <td class="text-center">
+                <span v-if="item.serial_tracked" class="text-muted">스캔으로 처리</span>
+                <template v-else>
                 <button
                   class="btn"
                   @click="handleUpdateQuantity(item, 1)">입고</button>
                 <button
                   class="btn ml-0.5"
                   @click="handleUpdateQuantity(item, -1)" :disabled="item.quantity === 0">출고</button>
+                </template>
               </td>
               <td class="text-center">
                 <button
@@ -328,7 +301,6 @@ import { ref, computed, onActivated, watch, nextTick } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useToastStore } from '../stores/toastStore';
 import axios from 'axios';
-import ExcelPreviewModal from '../components/ExcelPreviewModal.vue';
 import { downloadCsv } from '../utils/csv';
 import { apiErrorMessage } from '../utils/apiError';
 import { playBeep } from '../utils/beep';
@@ -339,7 +311,6 @@ const toast = useToastStore();
 const searchQuery = ref('');
 const selectedLocation = ref('전체');
 const sortOption = ref('name');
-const newItemForm = ref({ sku: '', name: '', quantity: 0, location: '' });
 const skuInputRef = ref(null);
 const serialInputRef = ref(null);
 const scanSku = ref('');
@@ -419,11 +390,6 @@ const handleBatchDelete = async () => {
   } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); await store.fetchItems(); }
 };
 
-const fileInput = ref(null); const selectedFile = ref(null);
-const triggerFileInput = () => fileInput.value.click();
-const handleFileUpload = (event) => { const file = event.target.files[0]; if (file) { selectedFile.value = file; } event.target.value = ''; };
-const closeExcelModal = () => { selectedFile.value = null; };
-const handleExcelSuccess = () => { selectedFile.value = null; store.fetchItems(); };
 
 const downloadInventoryCSV = () => {
   if (filteredItems.value.length === 0) return toast.addToast('데이터 없음', 'error');
@@ -441,7 +407,6 @@ const handleScan = async () => {
   scanSerialVal.value = ''; await nextTick(); serialInputRef.value?.focus(); serialInputRef.value?.select();
 };
 
-const handleAddItem = async () => { try { await store.addItem(newItemForm.value); toast.addToast('등록 완료', 'success'); newItemForm.value = { sku: '', name: '', quantity: 0, location: '' }; } catch (e) { toast.addToast(e.response?.data?.sku ? '이미 등록된 SKU입니다.' : '등록 내용을 확인해 주세요.', 'error'); } };
 const handleUpdateQuantity = async (item, change) => { try { await store.adjustStock(item.id, change); } catch (e) { toast.addToast(e.response?.data?.error || '재고 변경 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); } };
 const handleDeleteItem = async (id) => { if (!confirm('삭제하시겠습니까?')) return; try { await store.deleteItem(id); toast.addToast('삭제됨', 'success'); } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); } };
 onActivated(() => { store.fetchItems(); store.fetchLocations(); });

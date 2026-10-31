@@ -19,7 +19,7 @@ from rest_framework.permissions import BasePermission, IsAdminUser, IsAuthentica
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, SalesOrder, SalesOrderItem, ReturnOrder
+from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder
 from .serializers import ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,7 @@ MAX_CODE_LENGTH = 100
 SERIAL_STATUSES = {value for value, _ in ItemSerial.STATUS_CHOICES}
 SERIAL_QUALITIES = {value for value, _ in ItemSerial.QUALITY_CHOICES}
 IN_STOCK = '재고보유'
+ITEM_TYPES = {value for value, _ in Item.TYPE_CHOICES}
 
 
 # 🌟 NEW: 슬랙/디스코드 웹훅 전송 헬퍼 함수
@@ -273,7 +274,16 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         # 동시에 수정해도 수량 변화가 어긋나지 않도록 행을 잠급니다.
-        old_quantity = Item.objects.select_for_update().get(pk=serializer.instance.pk).quantity
+        old = Item.objects.select_for_update().get(pk=serializer.instance.pk)
+        old_quantity = old.quantity
+        new_tracked = serializer.validated_data.get('serial_tracked', old.serial_tracked)
+        if new_tracked != old.serial_tracked:
+            in_progress = (
+                SalesOrderItem.objects.filter(item=old, order__status='출고대기').exists()
+                or PurchaseOrderItem.objects.filter(item=old, po__status__in=['발주대기', '입고중']).exists()
+            )
+            if in_progress:
+                raise ValidationError({'error': '진행 중인 주문 또는 발주서에 포함된 상품은 시리얼 관리 설정을 바꿀 수 없습니다.'})
         item = serializer.save()
         quantity_diff = item.quantity - old_quantity
 
@@ -297,6 +307,8 @@ class ItemViewSet(viewsets.ModelViewSet):
             return error_response('변경 수량을 정수로 입력해주세요.')
         item = self.get_object()
         item = Item.objects.select_for_update().get(pk=item.pk)
+        if item.serial_tracked:
+            return error_response('시리얼 관리 상품은 바코드 스캔이나 재고 조사로만 수량을 바꿀 수 있습니다.')
         if item.quantity + change < 0:
             return error_response(f'재고가 부족합니다. (현재 {item.quantity}개)')
         item.quantity += change
@@ -320,6 +332,8 @@ class ItemViewSet(viewsets.ModelViewSet):
         item = Item.objects.select_for_update().filter(sku=sku, is_active=True).first()
         if not item:
             return error_response('등록되지 않은 상품코드(SKU)입니다.', status.HTTP_404_NOT_FOUND)
+        if not item.serial_tracked:
+            return error_response('시리얼을 관리하지 않는 상품입니다.')
 
         if scan_type == 'in':
             if ItemSerial.objects.filter(serial_number=serial_number).exists():
@@ -377,11 +391,12 @@ class ItemViewSet(viewsets.ModelViewSet):
                 sku = (row.get('SKU') or '').strip()
                 name = (row.get('상품명') or '').strip()
                 qty = to_int(row.get('초기수량') or '0')
-                valid = sku and len(sku) <= MAX_CODE_LENGTH and name and len(name) <= 200 and qty is not None and qty >= 0
+                item_type = (row.get('구분') or '상품').strip()
+                valid = item_type in ITEM_TYPES and sku and len(sku) <= MAX_CODE_LENGTH and name and len(name) <= 200 and qty is not None and qty >= 0
                 if not valid or Item.objects.filter(sku=sku).exists():
                     skipped_count += 1
                     continue
-                item = Item.objects.create(sku=sku, name=name, quantity=qty)
+                item = Item.objects.create(sku=sku, name=name, quantity=qty, item_type=item_type, serial_tracked=item_type == '상품')
                 InventoryLog.objects.create(item=item, action='NEW', quantity_changed=qty)
                 success_count += 1
         except csv.Error:
@@ -421,6 +436,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def receive_inbound(self, request, pk=None):
         sku = clean_code(request.data.get('sku'))
+        serial_number = clean_code(request.data.get('serial_number'))
         receive_qty = to_int(request.data.get('quantity', 1))
         if not sku or receive_qty is None or receive_qty < 1:
             return error_response('입고할 상품(SKU)과 수량을 확인해주세요.')
@@ -432,29 +448,46 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         po_item = po.items.select_for_update().filter(item__sku=sku).first()
         if not po_item:
             return error_response('해당 발주서에 존재하지 않는 상품(SKU)입니다.')
+
+        master_item = Item.objects.select_for_update().get(pk=po_item.item_id)
+        if master_item.serial_tracked:
+            if not serial_number:
+                return error_response('시리얼 관리 상품입니다. 시리얼을 스캔해주세요.')
+            if receive_qty != 1:
+                return error_response('시리얼 관리 상품은 1개씩 스캔해주세요.')
+            if len(serial_number) > MAX_CODE_LENGTH or Item.objects.filter(sku=serial_number).exists():
+                return error_response(f'[{serial_number}] 시리얼 번호가 아니라 상품코드입니다. 기기의 시리얼을 스캔해주세요.')
+            if ItemSerial.objects.filter(serial_number=serial_number).exists():
+                return error_response(f'[{serial_number}] 이미 등록된 시리얼 번호입니다.')
+        elif serial_number:
+            return error_response('시리얼을 관리하지 않는 상품입니다. 상품코드만 스캔해주세요.')
+
         remaining = po_item.order_quantity - po_item.received_quantity
         if receive_qty > remaining:
             return error_response(f'발주 수량을 초과합니다. (남은 수량 {remaining}개)')
+
+        if serial_number:
+            ItemSerial.objects.create(item=master_item, serial_number=serial_number, status=IN_STOCK)
 
         po_item.received_quantity += receive_qty
         po_item.save(update_fields=['received_quantity'])
 
         # 실제 마스터 재고 증가
-        master_item = Item.objects.select_for_update().get(pk=po_item.item_id)
         master_item.quantity += receive_qty
         master_item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=f"발주번호 {po.po_number} 정상 입고")
+        description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '')
+        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200])
 
         # 모든 품목 입고 완료 체크
         all_received = all(i.received_quantity >= i.order_quantity for i in po.items.all())
         po.status = '입고완료' if all_received else '입고중'
         po.save(update_fields=['status'])
 
-        return Response({'message': f'발주 품목 [{sku}] 정상 입고 처리 완료', 'status': po.status})
-
+        fresh = self.get_queryset().get(pk=po.pk)
+        return Response({'message': f'발주 품목 [{sku}] 정상 입고 처리 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
-    queryset = SalesOrder.objects.prefetch_related('items__item__location').order_by('-created_at', '-id')
+    queryset = SalesOrder.objects.prefetch_related('items__item__location', 'items__picked_serials__serial').order_by('-created_at', '-id')
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
     http_method_names = ['get', 'post', 'head', 'options']
@@ -472,9 +505,93 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
         if order.status != '출고대기':
             return error_response(f'{order.status} 상태의 주문은 취소할 수 없습니다.')
+        SalesOrderSerial.objects.filter(line__order=order).delete()
         order.status = '취소됨'
         order.save(update_fields=['status'])
         return Response({'message': f'주문 {order.order_no} 취소 완료', 'status': order.status})
+
+    def _scan_result(self, order, message, **extra):
+        fresh = self.get_queryset().get(pk=order.pk)
+        return Response({'message': message, 'order': self.get_serializer(fresh).data, **extra})
+
+    def _pick_serial(self, order, line, serial):
+        if not line.item.serial_tracked:
+            return error_response(f'[{line.item.sku}] 시리얼을 관리하지 않는 상품입니다. 상품코드를 스캔해주세요.')
+        if serial.status != IN_STOCK:
+            return error_response(f'[{serial.serial_number}] 출고할 수 없는 시리얼입니다. (현재: {serial.status})')
+        if SalesOrderSerial.objects.filter(serial=serial, line__order__status='출고대기').exists():
+            return error_response(f'[{serial.serial_number}] 이미 스캔한 시리얼입니다.')
+        if line.picked_quantity >= line.quantity:
+            return error_response(f'[{line.item.sku}] 지시 수량({line.quantity}개)을 모두 스캔했습니다.')
+        SalesOrderSerial.objects.create(line=line, serial=serial)
+        line.picked_quantity += 1
+        line.save(update_fields=['picked_quantity'])
+        return self._scan_result(order, f'{line.item.name} S/N {serial.serial_number} 확인')
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def scan(self, request, pk=None):
+        # 스캔 결과를 서버에 저장해, 새로고침하거나 다른 PC에서 이어서 작업해도 어긋나지 않습니다.
+        code = clean_code(request.data.get('code'))
+        current_sku = clean_code(request.data.get('sku'))
+        quantity = to_int(request.data.get('quantity', 1))
+        if not code or len(code) > MAX_CODE_LENGTH or quantity is None or quantity < 1:
+            return error_response('바코드 또는 수량을 확인해주세요.')
+
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if order.status != '출고대기':
+            return error_response(f'{order.status} 상태의 주문은 스캔할 수 없습니다.')
+        lines = list(order.items.select_related('item').select_for_update())
+        by_sku = {line.item.sku: line for line in lines}
+        by_item = {line.item_id: line for line in lines}
+
+        if code in by_sku:
+            line = by_sku[code]
+            if line.item.serial_tracked:
+                return self._scan_result(order, f'{line.item.name}: 시리얼을 스캔해주세요.', need_serial=True, sku=code)
+            if line.picked_quantity + quantity > line.quantity:
+                return error_response(f'[{code}] 지시 수량을 초과합니다. (남은 수량 {line.quantity - line.picked_quantity}개)')
+            if line.picked_quantity + quantity > line.item.quantity:
+                return error_response(f'[{code}] 재고가 부족합니다. (현재 {line.item.quantity}개)')
+            line.picked_quantity += quantity
+            line.save(update_fields=['picked_quantity'])
+            return self._scan_result(order, f'{line.item.name} {quantity}개 확인')
+
+        serial = ItemSerial.objects.select_for_update().filter(serial_number=code).first()
+        if serial:
+            line = by_item.get(serial.item_id)
+            if not line:
+                return error_response(f'[{code}] 이 주문에 없는 상품의 시리얼입니다.')
+            return self._pick_serial(order, line, serial)
+
+        line = by_sku.get(current_sku)
+        if not line:
+            if Item.objects.filter(sku=code).exists():
+                return error_response(f'[{code}] 이 주문에 없는 상품입니다. 오출고에 주의해주세요.')
+            return error_response(f'[{code}] 등록되지 않은 바코드입니다. 상품코드를 먼저 스캔해주세요.')
+        if Item.objects.filter(sku=code).exists():
+            return error_response(f'[{code}] 시리얼이 아니라 다른 상품의 상품코드입니다.')
+        if not line.item.serial_tracked:
+            return error_response(f'[{line.item.sku}] 시리얼을 관리하지 않는 상품입니다.')
+
+        # 시리얼 관리 전에 들어온 재고는 시리얼이 없으므로, 그 수량 안에서만 출고할 때 등록합니다.
+        registered = line.item.serials.filter(status=IN_STOCK).count()
+        if line.item.quantity <= registered:
+            return error_response(f'[{code}] 재고에 등록되지 않은 시리얼입니다.')
+        serial = ItemSerial.objects.create(item=line.item, serial_number=code, status=IN_STOCK)
+        return self._pick_serial(order, line, serial)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def reset_line(self, request, pk=None):
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if order.status != '출고대기':
+            return error_response(f'{order.status} 상태의 주문은 변경할 수 없습니다.')
+        line = order.items.select_for_update().filter(pk=to_int(request.data.get('line'))).first()
+        if not line:
+            return error_response('주문 품목을 찾을 수 없습니다.')
+        line.picked_serials.all().delete()
+        line.picked_quantity = 0
+        line.save(update_fields=['picked_quantity'])
+        return self._scan_result(order, '해당 품목의 스캔을 지웠습니다. 다시 스캔해주세요.')
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
@@ -483,10 +600,12 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         if order.status != '출고대기':
             return error_response(f'{order.status} 상태의 주문은 출고할 수 없습니다.')
 
-        lines = list(order.items.all())
+        lines = list(order.items.prefetch_related('picked_serials__serial'))
         items = {i.id: i for i in Item.objects.select_for_update().filter(id__in=[line.item_id for line in lines]).order_by('id')}
         for line in lines:
             item = items[line.item_id]
+            if line.picked_quantity < line.quantity:
+                return error_response(f'[{item.sku}] 스캔이 끝나지 않았습니다. ({line.picked_quantity}/{line.quantity})')
             if item.quantity < line.quantity:
                 return error_response(f'[{item.sku}] 재고가 부족합니다. (현재 {item.quantity}개, 요청 {line.quantity}개)')
 
@@ -494,6 +613,8 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
             item = items[line.item_id]
             item.quantity -= line.quantity
             item.save(update_fields=['quantity'])
+            serial_ids = [pick.serial_id for pick in line.picked_serials.all()]
+            ItemSerial.objects.filter(id__in=serial_ids).update(status='출고완료', updated_at=timezone.now())
             InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고')
             alert_if_low_stock(item)
 
@@ -501,7 +622,6 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         order.completed_at = timezone.now()
         order.save(update_fields=['status', 'completed_at'])
         return Response({'message': f'출고 완료 (총 {len(lines)}종 재고 차감)', 'status': order.status})
-
 
 class ReturnOrderViewSet(viewsets.ModelViewSet):
     queryset = ReturnOrder.objects.select_related('serial__item').order_by('-created_at', '-id')
@@ -651,6 +771,25 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
     queryset = WarehouseLocation.objects.all().order_by('zone', 'rack', 'tier')
     serializer_class = WarehouseLocationSerializer
     permission_classes = [IsAdminRole]
+
+
+class TodayAPIView(APIView):
+    # 첫 화면에 보여줄 오늘 할 일과 처음 설정 진행 상태
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).count()
+        return Response({
+            'orders': SalesOrder.objects.filter(status='출고대기').count(),
+            'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
+            'returns': ReturnOrder.objects.filter(status='회수대기').count(),
+            'low_stock': low_stock,
+            'setup': {
+                'locations': WarehouseLocation.objects.exists(),
+                'items': Item.objects.filter(is_active=True).exists(),
+                'suppliers': Supplier.objects.exists(),
+            },
+        })
 
 
 class DashboardAPIView(APIView):

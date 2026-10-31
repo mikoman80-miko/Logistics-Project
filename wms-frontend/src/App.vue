@@ -1,8 +1,8 @@
 <template>
-  <template v-if="!authStore.isAuthenticated"><router-view /></template>
+  <template v-if="!authStore.isAuthenticated || route.meta.work"><router-view /></template>
 
   <div v-else class="flex w-screen h-screen overflow-hidden bg-surface-app text-ink text-body font-sans">
-    <aside class="hidden md:flex w-[200px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden">
+    <aside class="hidden md:flex w-[230px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden">
       <div class="bg-surface-nav text-white p-3 border-b-2 border-primary text-center">
         <h2 class="m-0 text-heading font-bold">WMS 시스템</h2>
       </div>
@@ -10,67 +10,26 @@
         접속자: <strong>{{ authStore.user?.name }}</strong><br />
         권한: {{ authStore.user?.role }}
         <button @click="handleLogout"
-          class="btn btn-link btn-sm ml-1.5">[로그아웃]</button>
+          class="btn btn-link btn-sm ml-1.5">로그아웃</button>
       </div>
 
-      <ul class="list-none p-0 m-0">
-        <template v-if="authStore.user?.role === '관리자'">
-          <li class="menu-group">기준정보 관리</li>
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/locations' }"
-              @click.prevent="openMenu('/locations')">- 창고 구역/랙 관리</a></li>
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/items' }"
-              @click.prevent="openMenu('/items')">- 상품/카테고리 관리</a></li>
-        </template>
+      <div class="p-2 border-b border-line">
+        <button class="btn btn-success btn-block" @click="router.push('/work')">현장 작업 화면 열기</button>
+      </div>
 
-        <li class="menu-group">물류 작업 관리</li>
-        <template v-if="authStore.user?.role === '관리자'">
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/' }"
-              @click.prevent="openMenu('/')">- 재고/출납 관리</a></li>
-        </template>
-
-        <!-- 🌟 NEW: 발주 메뉴 추가 -->
-        <li><a href="#"
-            class="menu-link"
-            :class="{ 'is-active': tabStore.activeTabPath === '/purchase-order' }"
-            @click.prevent="openMenu('/purchase-order')">- 정규 발주 및 입고</a></li>
-        <li><a href="#"
-            class="menu-link"
-            :class="{ 'is-active': tabStore.activeTabPath === '/receiving' }"
-            @click.prevent="openMenu('/receiving')">- 반품/AS 입고 검수</a></li>
-        <li><a href="#"
-            class="menu-link"
-            :class="{ 'is-active': tabStore.activeTabPath === '/picking' }"
-            @click.prevent="openMenu('/picking')">- 피킹 및 출고 검수</a></li>
-
-        <template v-if="authStore.user?.role === '관리자'">
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/audit' }"
-              @click.prevent="openMenu('/audit')">- 월말 재고 실사</a></li>
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/serials' }"
-              @click.prevent="openMenu('/serials')">- 시리얼/품질 상태 관리</a></li>
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/ledger' }"
-              @click.prevent="openMenu('/ledger')">- 재고수불부</a></li>
-          <li><a href="#"
-              class="menu-link"
-              :class="{ 'is-active': tabStore.activeTabPath === '/dashboard' }"
-              @click.prevent="openMenu('/dashboard')">- 입출고 통계 조회</a></li>
+      <ul class="list-none p-0 m-0 overflow-y-auto">
+        <template v-for="group in menuGroups" :key="group.title">
+          <li class="menu-group">{{ group.title }}</li>
+          <li v-for="menu in group.menus" :key="menu.path">
+            <a href="#" class="menu-link" :class="{ 'is-active': tabStore.activeTabPath === menu.path }"
+              @click.prevent="openMenu(menu.path)">{{ menu.title }}</a>
+          </li>
         </template>
       </ul>
     </aside>
 
     <main class="flex-1 flex flex-col min-w-0 md:min-w-[800px] bg-white overflow-hidden">
-      <header class="bg-surface-head h-[35px] border-b border-line-strong flex flex-col shrink-0 print:hidden">
+      <header class="bg-surface-head h-[44px] border-b border-line-strong flex flex-col shrink-0 print:hidden">
         <div class="flex h-full justify-between items-end px-2.5 pl-[5px]">
           <div
             class="flex gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -99,18 +58,19 @@
       </div>
     </main>
 
-    <div class="fixed bottom-[30px] right-[30px] z-[9999] flex flex-col gap-2.5 pointer-events-none print:hidden">
-      <transition-group enter-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
-        leave-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
-        enter-from-class="opacity-0 translate-x-full" leave-to-class="opacity-0 translate-y-5">
+  </div>
 
-        <div v-for="toast in toastStore.toasts" :key="toast.id"
-          class="min-w-[250px] px-5 py-[15px] text-white text-heading font-bold rounded shadow-[0_4px_15px_rgba(0,0,0,0.3)] pointer-events-auto flex items-center gap-2.5"
-          :class="{ 'bg-success border-l-[6px] border-success-dark': toast.type === 'success', 'bg-danger border-l-[6px] border-danger-dark': toast.type === 'error', 'bg-primary border-l-[6px] border-primary-dark': toast.type === 'info' || !toast.type }">
-          {{ toast.message }}
-        </div>
-      </transition-group>
-    </div>
+  <div class="fixed bottom-[30px] right-[30px] z-[9999] flex flex-col gap-2.5 pointer-events-none print:hidden">
+    <transition-group enter-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
+      leave-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
+      enter-from-class="opacity-0 translate-x-full" leave-to-class="opacity-0 translate-y-5">
+
+      <div v-for="toast in toastStore.toasts" :key="toast.id"
+        class="min-w-[250px] px-5 py-[15px] text-white text-heading font-bold rounded shadow-[0_4px_15px_rgba(0,0,0,0.3)] pointer-events-auto flex items-center gap-2.5"
+        :class="{ 'bg-success border-l-[6px] border-success-dark': toast.type === 'success', 'bg-danger border-l-[6px] border-danger-dark': toast.type === 'error', 'bg-primary border-l-[6px] border-primary-dark': toast.type === 'info' || !toast.type }">
+        {{ toast.message }}
+      </div>
+    </transition-group>
   </div>
 </template>
 
@@ -132,6 +92,27 @@ watch(() => [route.path, route.meta.title], ([newPath]) => {
     tabStore.addTab({ path: newPath, name: route.name, meta: { title: route.meta.title } })
   }
 }, { immediate: true })
+
+const menuGroups = [
+  { title: '시작', menus: [{ title: '오늘 할 일', path: '/today' }] },
+  { title: '입고', menus: [{ title: '발주 관리', path: '/purchase-order' }] },
+  { title: '출고', menus: [{ title: '주문 관리', path: '/orders' }] },
+  { title: '반품', menus: [{ title: '반품 관리', path: '/returns' }] },
+  { title: '재고', menus: [
+    { title: '재고 현황', path: '/stock' },
+    { title: '재고 조사', path: '/audit' },
+    { title: '시리얼 조회', path: '/serials' },
+  ] },
+  { title: '보고서', menus: [
+    { title: '입출고 장부', path: '/ledger' },
+    { title: '입출고 통계', path: '/dashboard' },
+  ] },
+  { title: '기본 설정', menus: [
+    { title: '상품', path: '/items' },
+    { title: '보관 위치', path: '/locations' },
+    { title: '거래처', path: '/suppliers' },
+  ] },
+]
 
 const openMenu = (path) => { router.push(path) }
 

@@ -21,8 +21,8 @@ class BaseCase(APITestCase):
     def setUp(self):
         self.admin = User.objects.create_user('boss', password='pw-strong-1', is_staff=True)
         self.worker = User.objects.create_user('worker', password='pw-strong-2')
-        self.item = Item.objects.create(sku='A-1', name='상품A', quantity=5)
-        self.other = Item.objects.create(sku='B-1', name='상품B', quantity=1)
+        self.item = Item.objects.create(sku='A-1', name='상품A', quantity=5, item_type='부자재', serial_tracked=False)
+        self.other = Item.objects.create(sku='B-1', name='상품B', quantity=1, item_type='부자재', serial_tracked=False)
 
 
 class AuthTests(BaseCase):
@@ -85,6 +85,7 @@ class StockTests(BaseCase):
 class ScanTests(BaseCase):
     def setUp(self):
         super().setUp()
+        Item.objects.filter(pk=self.item.pk).update(serial_tracked=True)
         self.client.force_authenticate(self.worker)
 
     def scan(self, **data):
@@ -270,6 +271,8 @@ class SalesOrderTests(BaseCase):
         self.assertEqual(self.client.post(ORDERS, {'customer': 'x', 'items': [self.line(self.item, 1)]}, format='json').status_code, 403)
         self.assertEqual(self.client.post(f'{ORDERS}{order_id}/cancel/').status_code, 403)
         self.assertEqual(self.client.get(ORDERS).status_code, 200)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 400)
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/scan/', {'code': 'A-1', 'quantity': 2}, format='json').status_code, 200)
         self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 200)
         self.item.refresh_from_db()
         self.assertEqual(self.item.quantity, 3)
@@ -278,7 +281,11 @@ class SalesOrderTests(BaseCase):
         self.assertEqual(self.item.quantity, 3)
 
     def test_complete_is_all_or_nothing(self):
+        Item.objects.filter(pk=self.other.pk).update(quantity=9)
         order_id = self.make_order(self.line(self.item, 2), self.line(self.other, 9)).data['id']
+        self.client.post(f'{ORDERS}{order_id}/scan/', {'code': 'A-1', 'quantity': 2}, format='json')
+        self.client.post(f'{ORDERS}{order_id}/scan/', {'code': 'B-1', 'quantity': 9}, format='json')
+        Item.objects.filter(pk=self.other.pk).update(quantity=1)
         self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 400)
         self.item.refresh_from_db()
         self.assertEqual(self.item.quantity, 5)
@@ -451,3 +458,168 @@ class ItemDeleteTests(BaseCase):
         self.assertEqual(res.status_code, 201)
         self.item.refresh_from_db()
         self.assertEqual((self.item.is_active, self.item.name, self.item.quantity), (True, '다시', 3))
+
+
+class SerialRuleTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_type_decides_default_tracking_and_can_change_later(self):
+        res = self.client.post(ITEMS, {'sku': 'P', 'name': '상품', 'item_type': '상품'})
+        self.assertTrue(res.data['serial_tracked'])
+        res = self.client.post(ITEMS, {'sku': 'G', 'name': '사은품', 'item_type': '사은품'})
+        self.assertFalse(res.data['serial_tracked'])
+        res = self.client.patch(f"{ITEMS}{res.data['id']}/", {'serial_tracked': True}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data['serial_tracked'])
+        res = self.client.post(ITEMS, {'sku': 'X', 'name': '예외', 'item_type': '구성품', 'serial_tracked': True})
+        self.assertTrue(res.data['serial_tracked'])
+
+    def test_cannot_change_tracking_during_open_order(self):
+        order = SalesOrder.objects.create(order_no='O', customer='c')
+        SalesOrderItem.objects.create(order=order, item=self.item, quantity=1)
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'serial_tracked': True}).status_code, 400)
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'name': '변경'}).status_code, 200)
+
+    def test_tracked_item_blocks_manual_adjust(self):
+        Item.objects.filter(pk=self.item.pk).update(serial_tracked=True)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 1}).status_code, 400)
+
+    def test_csv_type_column(self):
+        content = 'SKU,상품명,초기수량,구분\nC-1,스티커,3,사은품\nC-2,본품,1,\nC-3,오류,1,없는구분\n'.encode('utf-8-sig')
+        res = self.client.post(f'{ITEMS}upload_csv/', {'file': SimpleUploadedFile('a.csv', content)}, format='multipart')
+        self.assertIn('2건', res.data['message'])
+        self.assertFalse(Item.objects.get(sku='C-1').serial_tracked)
+        self.assertTrue(Item.objects.get(sku='C-2').serial_tracked)
+
+
+class OrderScanTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=2)
+        self.s1 = ItemSerial.objects.create(item=self.product, serial_number='SN1')
+        self.s2 = ItemSerial.objects.create(item=self.product, serial_number='SN2')
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(ORDERS, {'customer': 'c', 'items': [{'item': self.product.id, 'quantity': 1}, {'item': self.item.id, 'quantity': 2}]}, format='json')
+        self.order = res.data['id']
+        self.client.force_authenticate(self.worker)
+
+    def scan(self, code, **extra):
+        return self.client.post(f'{ORDERS}{self.order}/scan/', {'code': code, **extra}, format='json')
+
+    def done(self):
+        return self.client.post(f'{ORDERS}{self.order}/complete/')
+
+    def test_full_flow_ships_serial_and_stock(self):
+        res = self.scan('P-1')
+        self.assertTrue(res.data['need_serial'])
+        self.assertEqual(self.done().status_code, 400)
+        self.assertEqual(self.scan('SN1').status_code, 200)
+        self.assertEqual(self.scan('A-1').status_code, 200)
+        self.assertEqual(self.scan('A-1').status_code, 200)
+        self.assertEqual(self.done().status_code, 200)
+        self.s1.refresh_from_db()
+        self.s2.refresh_from_db()
+        self.product.refresh_from_db()
+        self.item.refresh_from_db()
+        self.assertEqual((self.s1.status, self.s2.status), ('출고완료', '재고보유'))
+        self.assertEqual((self.product.quantity, self.item.quantity), (1, 3))
+
+    def test_rejects_wrong_codes(self):
+        self.assertEqual(self.scan('B-1').status_code, 400)
+        self.assertEqual(self.scan('NOPE').status_code, 400)
+        other_item = Item.objects.create(sku='Z', name='z', quantity=1)
+        ItemSerial.objects.create(item=other_item, serial_number='ZS')
+        self.assertEqual(self.scan('ZS').status_code, 400)
+        self.assertEqual(self.scan('B-1', sku='P-1').status_code, 400)
+
+    def test_rejects_over_scan_and_duplicate(self):
+        self.assertEqual(self.scan('SN1').status_code, 200)
+        self.assertEqual(self.scan('SN1').status_code, 400)
+        self.assertEqual(self.scan('SN2').status_code, 400)
+        self.assertEqual(self.scan('A-1', quantity=3).status_code, 400)
+        self.assertEqual(self.scan('A-1', quantity=2).status_code, 200)
+        self.assertEqual(self.scan('A-1').status_code, 400)
+
+    def test_shipped_serial_rejected(self):
+        ItemSerial.objects.filter(pk=self.s1.pk).update(status='출고완료')
+        self.assertEqual(self.scan('SN1').status_code, 400)
+
+    def test_serial_reserved_by_other_open_order(self):
+        self.scan('SN1')
+        self.client.force_authenticate(self.admin)
+        other = self.client.post(ORDERS, {'customer': 'c', 'items': [{'item': self.product.id, 'quantity': 1}]}, format='json').data['id']
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(f'{ORDERS}{other}/scan/', {'code': 'SN1'}, format='json').status_code, 400)
+
+    def test_unregistered_serial_only_for_stock_without_serial(self):
+        # 재고 2개, 시리얼 2개면 모르는 시리얼은 거부합니다.
+        self.assertEqual(self.scan('NEW-SN', sku='P-1').status_code, 400)
+        # 시리얼 없는 재고가 생기면 출고하면서 등록합니다.
+        Item.objects.filter(pk=self.product.pk).update(quantity=3)
+        self.assertEqual(self.scan('NEW-SN', sku='P-1').status_code, 200)
+        self.assertEqual(ItemSerial.objects.get(serial_number='NEW-SN').item, self.product)
+
+    def test_reset_line(self):
+        res = self.scan('SN1')
+        line = next(l for l in res.data['order']['items'] if l['item_sku'] == 'P-1')
+        self.assertEqual(line['scanned_serials'], ['SN1'])
+        res = self.client.post(f'{ORDERS}{self.order}/reset_line/', {'line': line['id']}, format='json')
+        line = next(l for l in res.data['order']['items'] if l['item_sku'] == 'P-1')
+        self.assertEqual((line['picked_quantity'], line['scanned_serials']), (0, []))
+        self.assertEqual(self.scan('SN1').status_code, 200)
+
+    def test_cancel_releases_serial(self):
+        self.scan('SN1')
+        self.client.force_authenticate(self.admin)
+        self.client.post(f'{ORDERS}{self.order}/cancel/')
+        other = self.client.post(ORDERS, {'customer': 'c', 'items': [{'item': self.product.id, 'quantity': 1}]}, format='json').data['id']
+        self.assertEqual(self.client.post(f'{ORDERS}{other}/scan/', {'code': 'SN1'}, format='json').status_code, 200)
+
+
+class InboundSerialTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=0)
+        self.po = PurchaseOrder.objects.create(po_number='PO-1')
+        PurchaseOrderItem.objects.create(po=self.po, item=self.product, order_quantity=2)
+        PurchaseOrderItem.objects.create(po=self.po, item=self.item, order_quantity=3)
+        self.client.force_authenticate(self.worker)
+
+    def receive(self, **data):
+        return self.client.post(f'{POS}{self.po.id}/receive_inbound/', data, format='json')
+
+    def test_tracked_requires_serial(self):
+        self.assertEqual(self.receive(sku='P-1').status_code, 400)
+        self.assertEqual(self.receive(sku='P-1', serial_number='SN1', quantity=2).status_code, 400)
+        self.assertEqual(self.receive(sku='P-1', serial_number='A-1').status_code, 400)
+        self.assertEqual(self.receive(sku='P-1', serial_number='SN1').status_code, 200)
+        self.assertEqual(self.receive(sku='P-1', serial_number='SN1').status_code, 400)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 1)
+        self.assertEqual(ItemSerial.objects.get(serial_number='SN1').status, '재고보유')
+
+    def test_over_receipt_does_not_create_serial(self):
+        self.receive(sku='P-1', serial_number='SN1')
+        self.receive(sku='P-1', serial_number='SN2')
+        self.assertEqual(self.receive(sku='A-1', serial_number='X').status_code, 400)
+        self.assertEqual(self.receive(sku='P-1', serial_number='SN3').status_code, 400)
+        self.assertFalse(ItemSerial.objects.filter(serial_number='SN3').exists())
+
+    def test_untracked_takes_quantity(self):
+        res = self.receive(sku='A-1', quantity=3)
+        self.assertEqual(res.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 8)
+        self.assertEqual(res.data['po']['status'], '입고중')
+
+
+class TodayTests(BaseCase):
+    def test_counts_and_setup(self):
+        self.client.force_authenticate(self.worker)
+        SalesOrder.objects.create(order_no='O', customer='c')
+        PurchaseOrder.objects.create(po_number='P')
+        res = self.client.get('/api/inventory/today/')
+        self.assertEqual((res.data['orders'], res.data['purchase_orders'], res.data['returns'], res.data['low_stock']), (1, 1, 0, 2))
+        self.assertEqual(res.data['setup'], {'locations': False, 'items': True, 'suppliers': False})

@@ -3,12 +3,9 @@ import { defineStore } from 'pinia'
 import router from '../router'
 
 export const useTabStore = defineStore('tab', () => {
-  const openTabs = ref([
-    { title: '입출고 대시보드', path: '/dashboard', name: 'dashboard' }
-  ])
+  const openTabs = ref([])
   
-  // 💡 새로고침 시 무조건 '/dashboard'로 가는 현상 방지
-  const activeTabPath = ref(window.location.pathname)
+    const activeTabPath = ref(window.location.pathname)
 
   const addTab = (route) => {
     const isExist = openTabs.value.find(tab => tab.path === route.path)
@@ -23,10 +20,8 @@ export const useTabStore = defineStore('tab', () => {
     // 💡 여기서 router.push(route.path) 삭제 (라우터 충돌 및 화면 튕김 방지)
   }
 
-  // 권한별 기본 화면 (작업자는 대시보드에 접근할 수 없습니다)
-  const homeTab = () => (localStorage.getItem('user_role') === '관리자'
-    ? { title: '입출고 통계 조회', path: '/dashboard', name: 'dashboard' }
-    : { title: '피킹 및 출고 검수', path: '/picking', name: 'picking' })
+  // 탭이 없을 때 돌아갈 기본 화면 (탭은 관리 화면에서만 씁니다)
+  const homeTab = () => ({ title: '오늘 할 일', path: '/today', name: 'today' })
 
   // 탭 닫기 로직
   const removeTab = (targetPath) => {

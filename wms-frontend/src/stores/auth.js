@@ -96,8 +96,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = { name: username, role: role }
 
       // 권한별 첫 화면 분기
-      if (role === '관리자') router.push('/dashboard')
-      else router.push('/picking') // 현장작업자는 피킹 화면으로 바로 이동
+      router.push(role === '관리자' ? '/today' : '/work')
 
       return { success: true }
     } catch (error) {

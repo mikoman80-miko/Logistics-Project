@@ -2,45 +2,64 @@ import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import LoginView from '../views/LoginView.vue'
+import TodayView from '../views/TodayView.vue'
 import StockAuditView from '../views/inventory/StockAuditView.vue'
 import PickingView from '../views/outbound/PickingView.vue'
 import SerialTrackingView from '../views/inventory/SerialTrackingView.vue'
 import ReturnReceivingView from '../views/inbound/ReturnReceivingView.vue'
 import LocationMasterView from '../views/master/LocationMasterView.vue'
 import ItemMasterView from '../views/master/ItemMasterView.vue'
-// 🌟 NEW: 발주/입고 컴포넌트 추가
+import SupplierView from '../views/master/SupplierView.vue'
 import PurchaseOrderView from '../views/inbound/PurchaseOrderView.vue'
+import WorkHomeView from '../views/work/WorkHomeView.vue'
+import WorkInboundView from '../views/work/WorkInboundView.vue'
+import WorkOutboundView from '../views/work/WorkOutboundView.vue'
+import WorkReturnView from '../views/work/WorkReturnView.vue'
+
+const isAdmin = () => localStorage.getItem('user_role') === '관리자'
+const homePath = () => (isAdmin() ? '/today' : '/work')
+const adminPage = (title) => ({ requiresAuth: true, role: 'admin', title })
+const workPage = { requiresAuth: true, work: true }
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/login', name: 'login', component: LoginView },
-    { path: '/', name: 'home', component: HomeView, meta: { requiresAuth: true, title: '재고/출납 관리', role: 'admin' } },
-    { path: '/dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true, title: '입출고 통계 조회', role: 'admin' } },
-    { path: '/audit', name: 'audit', component: StockAuditView, meta: { requiresAuth: true, title: '월말 재고 실사', role: 'admin' } },
-    { path: '/serials', name: 'serials', component: SerialTrackingView, meta: { requiresAuth: true, title: '시리얼/품질 상태 관리', role: 'admin' } },
-    { path: '/locations', name: 'locations', component: LocationMasterView, meta: { requiresAuth: true, title: '창고 구역/랙 관리', role: 'admin' } },
-    { path: '/items', name: 'items', component: ItemMasterView, meta: { requiresAuth: true, title: '상품/카테고리 관리', role: 'admin' } },
-    { path: '/ledger', name: 'ledger', component: () => import('../views/inventory/StockLedgerView.vue'), meta: { requiresAuth: true, title: '재고수불부', role: 'admin' } },
-    
-    { path: '/picking', name: 'picking', component: PickingView, meta: { requiresAuth: true, title: '피킹 및 출고 검수' } },
-    { path: '/receiving', name: 'receiving', component: ReturnReceivingView, meta: { requiresAuth: true, title: '반품/AS 입고 검수' } },
-    // 🌟 NEW: 정규 발주 입고 라우터 추가 (작업자 공용)
-    { path: '/purchase-order', name: 'purchase-order', component: PurchaseOrderView, meta: { requiresAuth: true, title: '정규 발주 및 입고' } },
+    { path: '/', redirect: homePath },
+
+    // 현장 작업 화면 (큰 글씨, 스캔 중심)
+    { path: '/work', name: 'work', component: WorkHomeView, meta: workPage },
+    { path: '/work/inbound', name: 'work-inbound', component: WorkInboundView, meta: workPage },
+    { path: '/work/outbound', name: 'work-outbound', component: WorkOutboundView, meta: workPage },
+    { path: '/work/return', name: 'work-return', component: WorkReturnView, meta: workPage },
+
+    // 관리 화면
+    { path: '/today', name: 'today', component: TodayView, meta: adminPage('오늘 할 일') },
+    { path: '/purchase-order', name: 'purchase-order', component: PurchaseOrderView, meta: adminPage('발주 관리') },
+    { path: '/orders', name: 'orders', component: PickingView, meta: adminPage('주문 관리') },
+    { path: '/returns', name: 'returns', component: ReturnReceivingView, meta: adminPage('반품 관리') },
+    { path: '/stock', name: 'stock', component: HomeView, meta: adminPage('재고 현황') },
+    { path: '/audit', name: 'audit', component: StockAuditView, meta: adminPage('재고 조사') },
+    { path: '/serials', name: 'serials', component: SerialTrackingView, meta: adminPage('시리얼 조회') },
+    { path: '/ledger', name: 'ledger', component: () => import('../views/inventory/StockLedgerView.vue'), meta: adminPage('입출고 장부') },
+    { path: '/dashboard', name: 'dashboard', component: DashboardView, meta: adminPage('입출고 통계') },
+    { path: '/items', name: 'items', component: ItemMasterView, meta: adminPage('상품') },
+    { path: '/locations', name: 'locations', component: LocationMasterView, meta: adminPage('보관 위치') },
+    { path: '/suppliers', name: 'suppliers', component: SupplierView, meta: adminPage('거래처') },
+
+    // 예전 주소
+    { path: '/picking', redirect: '/orders' },
+    { path: '/receiving', redirect: '/returns' },
+    { path: '/:pathMatch(.*)*', redirect: homePath },
   ]
 })
 
-router.beforeEach((to, from) => {
+router.beforeEach((to) => {
   const isAuthenticated = !!localStorage.getItem('access_token')
-  const userRole = localStorage.getItem('user_role') || '현장작업자'
 
   if (to.meta.requiresAuth && !isAuthenticated) return '/login'
-  if (to.name === 'login' && isAuthenticated) return userRole === '관리자' ? '/dashboard' : '/picking'
-  
-  if (to.meta.role === 'admin' && userRole !== '관리자') {
-    alert('해당 메뉴는 관리자만 접근할 수 있습니다.')
-    return '/picking' 
-  }
+  if (to.name === 'login' && isAuthenticated) return homePath()
+  if (to.meta.role === 'admin' && !isAdmin()) return '/work'
 })
 
 export default router

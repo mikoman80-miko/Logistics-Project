@@ -44,13 +44,13 @@
   --color-disabled-ink: #888888;
 
   /* 글자 크기: text-caption, text-body, text-title, text-heading */
-  --text-caption: 11px;
-  --text-body: 12px;
-  --text-title: 13px;
-  --text-heading: 14px;
+  --text-caption: 13px;
+  --text-body: 15px;
+  --text-title: 17px;
+  --text-heading: 19px;
 
   /* 버튼, 입력창 높이: h-control-sm, h-control, h-control-lg */
-  --spacing-control-sm: 22px;
-  --spacing-control: 26px;
-  --spacing-control-lg: 30px;
+  --spacing-control-sm: 28px;
+  --spacing-control: 34px;
+  --spacing-control-lg: 40px;
 }

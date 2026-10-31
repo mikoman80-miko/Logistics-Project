@@ -29,7 +29,7 @@
                 width="120">보관 구역</th>
               <th
                
-                width="150">SKU 코드</th>
+                width="150">상품코드</th>
               <th
                >
                 상품명</th>

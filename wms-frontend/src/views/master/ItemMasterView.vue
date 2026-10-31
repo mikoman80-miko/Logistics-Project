@@ -4,10 +4,10 @@
       <table class="form-table">
         <tbody>
           <tr>
-            <th>상품/SKU 검색</th>
+            <th>상품명/코드 검색</th>
             <td><input v-model="searchQuery" type="text"
                 class="field w-full"
-                placeholder="상품명 또는 SKU 검색" /></td>
+                placeholder="상품명 또는 상품코드 검색" /></td>
             <th>카테고리 필터</th>
             <td>
               <select v-model="selectedCategory"
@@ -26,9 +26,13 @@
             <th>상품 수동 등록</th>
             <td colspan="4">
               <form @submit.prevent="handleAddItem" class="flex items-center gap-1.5">
-                SKU: <input v-model="newItemForm.sku"
+                구분: <select v-model="newItemForm.item_type" class="field w-[80px]" @change="newItemForm.serial_tracked = newItemForm.item_type === '상품'">
+                  <option v-for="type in ITEM_TYPES" :key="type" :value="type">{{ type }}</option>
+                </select>
+                <label class="flex items-center gap-1"><input v-model="newItemForm.serial_tracked" type="checkbox" /> 시리얼 관리</label>
+                상품코드: <input v-model="newItemForm.sku"
                   class="field w-[120px]" required
-                  placeholder="SKU 입력" />
+                  placeholder="상품코드 입력" />
                 상품명: <input v-model="newItemForm.name"
                   class="field w-[180px]" required
                   placeholder="상품명 입력" />
@@ -69,9 +73,9 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th
-               
-                width="120">SKU</th>
+              <th width="90">구분</th>
+              <th width="70">시리얼</th>
+              <th width="120">상품코드</th>
               <th
                >
                 상품명</th>
@@ -87,7 +91,7 @@
                 width="80">현재수량</th>
               <th
                
-                width="180">로케이션</th>
+                width="180">보관 위치</th>
               <th
                
                 width="120">관리 도구</th>
@@ -95,9 +99,17 @@
           </thead>
           <tbody>
             <tr v-if="filteredItems.length === 0">
-              <td colspan="7" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다.</td>
+              <td colspan="9" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다. 위에서 상품을 등록하세요.</td>
             </tr>
             <tr v-for="item in filteredItems" :key="item.id">
+              <td class="text-center">
+                <select class="field field-sm w-full" :value="item.item_type" @change="changeItem(item, { item_type: $event.target.value, serial_tracked: $event.target.value === '상품' })">
+                  <option v-for="type in ITEM_TYPES" :key="type" :value="type">{{ type }}</option>
+                </select>
+              </td>
+              <td class="text-center">
+                <input type="checkbox" :checked="item.serial_tracked" @change="changeItem(item, { serial_tracked: $event.target.checked })" />
+              </td>
               <td class="text-center font-mono font-bold">{{ item.sku }}</td>
               <td class="font-bold">{{ item.name }}</td>
               <td class="text-center">{{ getCategoryName(item.category) }}</td>
@@ -123,16 +135,16 @@
       </div>
     </div>
 
-    <!-- 로케이션 이동 모달 -->
+    <!-- 보관 위치 이동 모달 -->
     <div v-if="isTransferModalOpen" class="modal-overlay"
       @click.self="closeTransferModal">
       <div class="modal w-[450px]">
-        <div class="modal-header">로케이션(위치) 이동</div>
+        <div class="modal-header">보관 위치(위치) 이동</div>
         <div class="modal-content">
           <div class="bg-[#eff6ff] border border-[#bfdbfe] text-[#1e40af] p-3 mb-4 text-sm font-bold">대상 상품: {{
             selectedItem?.name }} <span class="font-mono">({{ selectedItem?.sku }})</span></div>
           <div class="flex flex-col gap-2">
-            <label class="font-bold text-[#374151] text-xs">이동할 목표 로케이션 선택</label>
+            <label class="font-bold text-[#374151] text-xs">이동할 목표 보관 위치 선택</label>
             <select v-model="selectedLocationId"
               class="field field-lg">
               <option value="" disabled>== 창고 구역 선택 ==</option>
@@ -168,7 +180,9 @@ const selectedCategory = ref('전체');
 const isTransferModalOpen = ref(false);
 const selectedItem = ref(null);
 const selectedLocationId = ref('');
-const newItemForm = ref({ sku: '', name: '', quantity: 0, category: null });
+const ITEM_TYPES = ['상품', '구성품', '부자재', '사은품'];
+const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, category: null });
+const newItemForm = ref(emptyItemForm());
 const toast = useToastStore();
 const csvInput = ref(null);
 
@@ -215,6 +229,16 @@ const getLocationName = (locId) => {
   return '미지정';
 };
 
+const changeItem = async (item, change) => {
+  try {
+    await axios.patch(`/api/inventory/items/${item.id}/`, change);
+    toast.addToast(`[${item.sku}] 변경되었습니다.`, 'success');
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '변경 중 오류가 발생했습니다.'), 'error', 5000);
+  }
+  await fetchItems();
+};
+
 const addCategory = async () => {
   const name = prompt('새 카테고리 이름을 입력하세요.')?.trim();
   if (!name) return;
@@ -229,7 +253,7 @@ const handleAddItem = async () => {
   try {
     await axios.post('/api/inventory/items/', newItemForm.value);
     toast.addToast('상품이 신규 등록되었습니다.', 'success');
-    newItemForm.value = { sku: '', name: '', quantity: 0, category: null };
+    newItemForm.value = emptyItemForm();
     await fetchItems();
   } catch (err) { toast.addToast(apiErrorMessage(err, '등록 실패 (SKU 중복 확인)'), 'error'); }
 };
@@ -259,7 +283,7 @@ const submitTransfer = async () => {
   if (!selectedLocationId.value) return;
   try {
     await axios.post(`/api/inventory/items/${selectedItem.value.id}/transfer_location/`, { new_location_id: selectedLocationId.value });
-    toast.addToast('로케이션 이동이 완료되었습니다.', 'success');
+    toast.addToast('보관 위치 이동이 완료되었습니다.', 'success');
     closeTransferModal();
     await fetchItems();
   } catch (err) { toast.addToast('이동 실패', 'error'); }

@@ -33,7 +33,7 @@
   }
 
   .panel-header {
-    @apply flex justify-between items-center gap-2 min-h-[34px] px-2.5 py-1 box-border shrink-0 bg-surface-panel border-b border-line-strong text-ink text-body;
+    @apply flex justify-between items-center gap-2 min-h-[44px] px-2.5 py-1 box-border shrink-0 bg-surface-panel border-b border-line-strong text-ink text-body;
   }
 
   .panel-title {
@@ -204,7 +204,7 @@
   }
 
   .form-table th {
-    @apply w-[100px] px-2 py-1 text-right font-bold bg-surface-head border border-line;
+    @apply w-[120px] px-2 py-1 text-right font-bold bg-surface-head border border-line;
   }
 
   .form-table td {
@@ -261,6 +261,109 @@
 
   .modal-footer {
     @apply flex justify-center gap-1.5 p-2 shrink-0 bg-surface-head border-t border-line;
+  }
+
+  /* ---------- 첫 화면 카드 ---------- */
+  .today-card {
+    @apply flex flex-col items-center p-4 cursor-pointer text-body text-ink bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)] hover:bg-primary-soft;
+    font-family: inherit;
+  }
+
+  /* ---------- 현장 작업 화면 (큰 모니터, 바코드 스캐너) ---------- */
+  .work-screen {
+    @apply flex flex-col w-screen h-screen overflow-hidden text-2xl text-ink bg-surface-app;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .work-header {
+    @apply flex justify-between items-center h-20 px-6 shrink-0 text-white bg-surface-nav;
+  }
+
+  .work-header-btn {
+    @apply h-14 px-5 cursor-pointer text-2xl font-bold text-ink bg-white border-none rounded hover:bg-surface-active;
+    font-family: inherit;
+  }
+
+  .work-body {
+    @apply flex-1 min-h-0 p-6 overflow-y-auto;
+  }
+
+  .work-card {
+    @apply flex flex-col justify-center items-center gap-6 cursor-pointer text-ink bg-white border-4 border-line-strong rounded-lg hover:bg-primary-soft hover:border-primary;
+    font-family: inherit;
+  }
+
+  .work-row {
+    @apply grid grid-cols-[1.2fr_1.5fr_1fr] items-center gap-4 h-24 px-6 cursor-pointer text-left text-3xl text-ink bg-white border-2 border-line-strong rounded hover:bg-primary-soft hover:border-primary;
+    font-family: inherit;
+  }
+
+  .work-task {
+    @apply flex flex-col gap-3 p-6 bg-white border-2 border-line-strong rounded;
+  }
+
+  .work-scan {
+    @apply w-full h-24 px-5 box-border text-5xl font-bold outline-none bg-highlight border-4 border-primary rounded disabled:bg-disabled;
+    font-family: inherit;
+  }
+
+  .work-btn {
+    @apply flex-none h-20 px-6 cursor-pointer text-3xl font-bold text-ink bg-surface-head border-2 border-line-strong rounded hover:bg-surface-active disabled:cursor-not-allowed disabled:opacity-50;
+    font-family: inherit;
+  }
+
+  .work-btn-primary {
+    @apply text-white bg-primary border-primary-dark hover:bg-primary-hover;
+  }
+
+  .work-btn-success {
+    @apply text-white bg-success border-success-dark hover:bg-success-hover;
+  }
+
+  .work-btn-warning {
+    @apply text-white bg-warning border-warning-dark hover:bg-warning-hover;
+  }
+
+  .work-btn-danger {
+    @apply text-white bg-danger border-danger-dark hover:bg-danger-hover;
+  }
+
+  .work-line {
+    @apply p-4 shrink-0 text-2xl bg-white border-2 border-line rounded;
+  }
+
+  .work-line.is-current {
+    @apply bg-highlight border-primary;
+  }
+
+  .work-line.is-done {
+    @apply text-success bg-success-soft border-success;
+  }
+
+  .work-link {
+    @apply p-0 cursor-pointer text-xl underline text-primary bg-transparent border-none;
+    font-family: inherit;
+  }
+
+  .work-empty {
+    @apply p-10 text-center text-3xl font-bold text-muted bg-white border-2 border-line-strong rounded;
+  }
+
+  .work-toast-ok {
+    @apply fixed top-24 left-1/2 -translate-x-1/2 z-[2000] max-w-[90vw] px-10 py-5 text-4xl font-bold text-white bg-success rounded-lg shadow-lg pointer-events-none;
+  }
+
+  .work-error {
+    @apply fixed inset-0 z-[3000] flex flex-col justify-center items-center gap-10 p-10 cursor-pointer text-white bg-danger;
+  }
+
+  .work-error-btn {
+    @apply h-24 px-12 cursor-pointer text-4xl font-bold text-danger bg-white border-none rounded-lg;
+    font-family: inherit;
+  }
+
+  .work-dialog {
+    @apply flex flex-col gap-5 w-[700px] p-8 bg-white rounded-lg;
   }
 
   /* ---------- 내비게이션 ---------- */

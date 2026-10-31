@@ -11,7 +11,8 @@ from .views import (
     SalesOrderViewSet,
     ReturnOrderViewSet,
     InventoryLedgerAPIView, 
-    DashboardAPIView
+    DashboardAPIView,
+    TodayAPIView,
 )
 
 router = DefaultRouter()
@@ -29,4 +30,5 @@ urlpatterns = [
     path('', include(router.urls)),
     path('ledger/', InventoryLedgerAPIView.as_view(), name='inventory-ledger'),
     path('dashboard/', DashboardAPIView.as_view(), name='dashboard-stats'),
+    path('today/', TodayAPIView.as_view(), name='today-summary'),
 ]

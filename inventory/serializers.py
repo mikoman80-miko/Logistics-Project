@@ -45,6 +45,13 @@ class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = '__all__'
+        read_only_fields = ['is_active']
+
+    def validate(self, attrs):
+        # 등록 시 따로 정하지 않으면 상품만 시리얼 관리, 구성품/부자재/사은품은 관리하지 않습니다.
+        if not self.instance and 'serial_tracked' not in self.initial_data:
+            attrs['serial_tracked'] = attrs.get('item_type', '상품') == '상품'
+        return attrs
 
 # 🌟 NEW: 신규 모델 Serializer 추가
 class SupplierSerializer(serializers.ModelSerializer):
@@ -56,6 +63,8 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.filter(is_active=True))
     item_sku = serializers.CharField(source='item.sku', read_only=True)
     item_name = serializers.CharField(source='item.name', read_only=True)
+    serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
+    location_name = serializers.ReadOnlyField(source='item.location.full_code')
     order_quantity = serializers.IntegerField(min_value=1)
 
     class Meta:
@@ -88,11 +97,17 @@ class SalesOrderItemSerializer(serializers.ModelSerializer):
     item_name = serializers.CharField(source='item.name', read_only=True)
     location_name = serializers.ReadOnlyField(source='item.location.full_code')
     current_quantity = serializers.IntegerField(source='item.quantity', read_only=True)
+    serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
     quantity = serializers.IntegerField(min_value=1)
+    scanned_serials = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrderItem
         exclude = ['order']
+        read_only_fields = ['picked_quantity']
+
+    def get_scanned_serials(self, obj):
+        return [pick.serial.serial_number for pick in obj.picked_serials.all()]
 
 class SalesOrderSerializer(serializers.ModelSerializer):
     items = SalesOrderItemSerializer(many=True)

@@ -20,7 +20,7 @@
           class="field w-[200px]"
           placeholder="설명 입력" />
         <button type="submit"
-          class="btn btn-success ml-2.5">로케이션
+          class="btn btn-success ml-2.5">보관 위치
           등록</button>
       </form>
     </div>
@@ -39,7 +39,7 @@
             <tr>
               <th
                
-                width="150">전체 로케이션 코드</th>
+                width="150">전체 보관 위치 코드</th>
               <th
                
                 width="100">구역 (Zone)</th>
@@ -62,7 +62,7 @@
           </thead>
           <tbody>
             <tr v-if="locations.length === 0">
-              <td colspan="7" class="text-center">등록된 로케이션이 없습니다.</td>
+              <td colspan="7" class="text-center">등록된 보관 위치이 없습니다.</td>
             </tr>
             <tr v-for="loc in locations" :key="loc.id">
               <td class="text-center font-mono font-bold text-primary truncate">{{
@@ -99,7 +99,7 @@ const fetchLocations = async () => {
     const res = await axios.get('/api/inventory/locations/')
     locations.value = res.data
   } catch (e) {
-    console.error('로케이션 조회 실패', e)
+    console.error('보관 위치 조회 실패', e)
   }
 }
 
@@ -108,14 +108,14 @@ const handleAddLocation = async () => {
     await axios.post('/api/inventory/locations/', form.value)
     form.value = { zone: '', rack: '', tier: 1, cell: '', description: '' }
     await fetchLocations()
-    toast.addToast('로케이션이 성공적으로 등록되었습니다.', 'success') // 🌟 기존 alert 교체
+    toast.addToast('보관 위치이 성공적으로 등록되었습니다.', 'success') // 🌟 기존 alert 교체
   } catch (e) {
     toast.addToast('등록 중 오류가 발생했습니다.', 'error') // 🌟 기존 alert 교체
   }
 }
 
 const handleDelete = async (id) => {
-  if (!confirm('해당 로케이션을 삭제하시겠습니까?')) return
+  if (!confirm('해당 보관 위치을 삭제하시겠습니까?')) return
   try {
     await axios.delete(`/api/inventory/locations/${id}/`)
     await fetchLocations()
