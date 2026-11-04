@@ -646,3 +646,17 @@ test('기준정보 변경 이력: 앞에서 바꾼 상품·사용자 기록 확�
   await expect(admin.locator('tbody tr').first()).toContainText('e2e_worker')
   await shot(admin, '33-change-history')
 })
+
+test('관리자 집품 리스트 인쇄: 고른 주문을 위치 순서로 모아 인쇄 화면', async () => {
+  await admin.goto('/orders')
+  await orderRow(admin, '집품고객A').locator('input[type=checkbox]').check()
+  await orderRow(admin, '집품고객B').locator('input[type=checkbox]').check()
+  await admin.getByRole('button', { name: '집품 리스트 인쇄 (2건)' }).click()
+  const modal = admin.locator('.modal', { hasText: '집품 리스트 인쇄' })
+  const line = modal.locator('tbody tr', { hasText: 'E2E-CABLE' }).first()
+  await expect(line).toContainText('A-R01-1단')
+  await expect(line.locator('td').nth(4)).toHaveText('3')
+  await expect(modal).toContainText('주문별 나누기')
+  await shot(admin, '34-pick-list-print')
+  await modal.getByRole('button', { name: '닫기' }).click()
+})

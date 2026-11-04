@@ -42,6 +42,7 @@
 
     <ShippingLabelModal v-if="labelOrder" :order="labelOrder" @close="labelOrder = null" />
     <AddressImportModal v-if="importOpen" @close="importOpen = false" @saved="loadOrders" />
+    <PickListPrintModal v-if="pickListOpen" :orders="pickOrders" @close="pickListOpen = false" />
 
     <div class="page-split">
       <div class="panel w-full md:w-[520px] shrink-0">
@@ -61,6 +62,7 @@
         <div class="toolbar px-2.5 py-1.5 border-b border-line bg-surface-head">
           <span class="text-muted">선택 {{ checkedIds.length }}건</span>
           <button class="btn btn-sm" :disabled="checkedIds.length < 2 || isSaving" title="받는 분과 배송지가 같은 출고대기 주문을 운송장 하나로 보냅니다" @click="bundleOrders">묶음배송</button>
+          <button class="btn btn-sm" :disabled="!pickOrders.length" :title="checkedIds.length ? '고른 주문의 품목을 위치 순서로 인쇄합니다' : '고른 주문이 없으면 목록의 출고대기 주문 전부를 인쇄합니다'" @click="pickListOpen = true">집품 리스트 인쇄 ({{ pickOrders.length }}건)</button>
           <span class="flex-1"></span>
           <button class="btn btn-sm" @click="importOpen = true">배송지 일괄 등록</button>
         </div>
@@ -165,6 +167,7 @@ import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
 import AddressImportModal from '../../components/AddressImportModal.vue'
+import PickListPrintModal from '../../components/PickListPrintModal.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
@@ -193,6 +196,13 @@ const importOpen = ref(false)
 const checkedIds = ref([])
 
 // 묶음배송: 출고대기이고 아직 묶이지 않은 주문만 고를 수 있습니다.
+// 집품 리스트: 고른 주문, 없으면 목록의 출고대기 주문 전부
+const pickListOpen = ref(false)
+const pickOrders = computed(() => {
+  const waiting = orders.value.filter(o => o.status === '출고대기')
+  return checkedIds.value.length ? waiting.filter(o => checkedIds.value.includes(o.id)) : waiting
+})
+
 const canBundle = (order) => order.status === '출고대기' && order.bundle_orders.length === 0
 const addressKey = (o) => [o.contact_name, (o.contact_phone || '').replace(/\D/g, ''), o.zipcode, o.address, o.address_detail]
   .map(v => String(v || '').trim().replace(/\s+/g, ' ')).join('|')
