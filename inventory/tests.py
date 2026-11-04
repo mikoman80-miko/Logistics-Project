@@ -1661,3 +1661,31 @@ class ReceiptIssueTests(BaseCase):
         data = self.client.get('/api/inventory/reports/receipt-issues/').data
         self.assertEqual(data['suppliers'][0], {'supplier': '공급사A', 'ordered': 10, '부족': 4, '파손': 1, '초과': 0, 'count': 2, 'rate': 50.0})
         self.assertEqual([i['kind'] for i in data['issues']], ['부족', '파손'])
+
+
+class AnalysisReportTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        InventoryLog.objects.create(item=self.item, action='OUT', quantity_changed=-9, work='출고', reference='ORD-1')
+        InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=4, work='입고', reference='PO-1')
+
+    def test_stock_aging(self):
+        data = self.client.get('/api/inventory/reports/stock-aging/', {'days': 90}).data
+        rows = {r['sku']: r for r in data['items']}
+        self.assertEqual((rows['A-1']['outbound'], rows['A-1']['cover_days'], rows['A-1']['turnover'], rows['A-1']['aging']), (9, 50, 1.8, False))
+        self.assertEqual((rows['B-1']['aging'], rows['B-1']['last_out']), (True, None))  # 재고 1개, 출고 없음
+        self.assertEqual(data['summary']['aging_items'], 1)
+        self.assertEqual(self.client.get('/api/inventory/reports/stock-aging/', {'days': 1000}).status_code, 400)
+
+    def test_return_analysis(self):
+        for reason, quantity, status in [('단순변심', 2, '회수완료'), ('단순변심', 1, '회수대기'), ('불량', 1, '회수완료'), ('불량', 5, '취소됨')]:
+            ReturnOrder.objects.create(return_no=f'RTN-{reason}{quantity}', customer='고객', reason=reason, item=self.item, quantity=quantity,
+                                       status=status, result='재고로 되돌림' if status == '회수완료' else '')
+        data = self.client.get('/api/inventory/reports/returns/').data
+        self.assertEqual(data['summary'], {'returns': 3, 'quantity': 4, 'shipped': 9, 'rate': 44.4, 'waiting': 1})
+        self.assertEqual([(r['reason'], r['count']) for r in data['by_reason']], [('단순변심', 2), ('불량', 1)])
+        self.assertEqual((data['by_item'][0]['rate'], data['by_item'][0]['top_reason']), (44.4, '단순변심'))
+        self.assertEqual(data['by_result'], [{'result': '재고로 되돌림', 'count': 2}])
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get('/api/inventory/reports/returns/').status_code, 403)

@@ -119,6 +119,7 @@ const menuGroups = [
     { title: '입출고 통계', path: '/dashboard' },
     { title: '작업자 실적', path: '/workers' },
     { title: '입고 검수 차이', path: '/receipt-issues' },
+    { title: '재고·반품 분석', path: '/analysis' },
   ] },
   { title: '기본 설정', menus: [
     { title: '상품', path: '/items' },

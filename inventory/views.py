@@ -14,7 +14,7 @@ from django.contrib.auth.models import User, update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError, transaction
-from django.db.models import Count, DateField, DateTimeField, F, Func, Q, Sum, Value
+from django.db.models import Count, DateField, DateTimeField, F, Func, Max, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.http import StreamingHttpResponse
 from django.utils import timezone
@@ -1943,6 +1943,80 @@ class ReceiptIssueReportAPIView(APIView):
             'issues': [{'id': i.id, 'created_at': timezone.localtime(i.created_at).isoformat(), 'po_id': i.po_item.po_id, 'po_number': i.po_item.po.po_number,
                         'supplier': i.po_item.po.supplier.name if i.po_item.po.supplier else '', 'sku': i.po_item.item.sku, 'name': i.po_item.item.name,
                         'kind': i.kind, 'quantity': i.quantity, 'note': i.note, 'user': user_display(i.user) if i.user else ''} for i in issues[:300]],
+        })
+
+
+class StockAgingAPIView(APIView):
+    """재고 회전·장기 재고: 최근 N일(기본 90) 출고량으로 상품별 재고 일수와 회전율, 마지막 출고일을 계산합니다.
+    장기 재고 = 재고가 있는데 N일 동안 한 번도 출고되지 않은 상품"""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        days = to_int(request.query_params.get('days')) or 90
+        if not 7 <= days <= 365:
+            return error_response('기간은 7~365일로 정하세요.')
+        since = timezone.now() - timedelta(days=days)
+        outbound = dict(InventoryLog.objects.filter(work='출고', timestamp__gte=since).values('item_id')
+                        .annotate(n=Sum('quantity_changed')).values_list('item_id', 'n'))
+        last_out = dict(InventoryLog.objects.filter(work='출고').values('item_id').annotate(t=Max('timestamp')).values_list('item_id', 't'))
+        last_in = dict(InventoryLog.objects.filter(work='입고').values('item_id').annotate(t=Max('timestamp')).values_list('item_id', 't'))
+        now = timezone.now()
+        rows = []
+        for item in Item.objects.filter(is_active=True).select_related('category', 'location').order_by('sku'):
+            out = abs(outbound.get(item.id) or 0)
+            daily = out / days
+            last = last_out.get(item.id)
+            rows.append({
+                'id': item.id, 'sku': item.sku, 'name': item.name, 'category': item.category.name if item.category else '',
+                'location': item.location.full_code if item.location else '', 'abc_grade': item.abc_grade or '',
+                'quantity': item.quantity, 'outbound': out,
+                'cover_days': round(item.quantity / daily) if daily else None,  # 지금 재고로 버틸 수 있는 날 수
+                'turnover': round(out / item.quantity, 2) if item.quantity else None,  # 기간 출고량 ÷ 지금 재고
+                'last_out': timezone.localtime(last).date().isoformat() if last else None,
+                'idle_days': (now - last).days if last else None,
+                'last_in': timezone.localtime(last_in[item.id]).date().isoformat() if item.id in last_in else None,
+                'aging': item.quantity > 0 and out == 0,
+            })
+        aging = [r for r in rows if r['aging']]
+        return Response({
+            'days': days, 'items': rows,
+            'summary': {'stocked': sum(1 for r in rows if r['quantity'] > 0), 'aging_items': len(aging), 'aging_quantity': sum(r['quantity'] for r in aging),
+                        'no_stock_moving': sum(1 for r in rows if r['quantity'] == 0 and r['outbound'] > 0)},
+        })
+
+
+class ReturnAnalysisAPIView(APIView):
+    """반품 분석: 기간(기본 최근 90일) 동안 사유별·상품별·처리 결과별 반품과, 같은 기간 출고 대비 반품률"""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        end = parse_date_param(request.query_params.get('end_date')) or timezone.localdate()
+        start = parse_date_param(request.query_params.get('start_date')) or end - timedelta(days=89)
+        if start > end:
+            return error_response('시작일이 종료일보다 늦습니다.')
+        lo, hi = day_start(start), day_start(end + timedelta(days=1))
+        returns = ReturnOrder.objects.filter(created_at__gte=lo, created_at__lt=hi).exclude(status='취소됨')
+        shipped = dict(InventoryLog.objects.filter(work='출고', timestamp__gte=lo, timestamp__lt=hi).values('item_id')
+                       .annotate(n=Sum('quantity_changed')).values_list('item_id', 'n'))
+        total = returns.count()
+        by_reason = [{'reason': r['reason'], 'count': r['n'], 'quantity': r['q'], 'share': round(r['n'] / total * 100, 1)}
+                     for r in returns.values('reason').annotate(n=Count('id'), q=Sum('quantity')).order_by('-n', 'reason')]
+        by_item = []
+        for r in returns.values('item_id', 'item__sku', 'item__name').annotate(n=Count('id'), q=Sum('quantity')).order_by('-q')[:30]:
+            out = abs(shipped.get(r['item_id']) or 0)
+            reasons = returns.filter(item_id=r['item_id']).values('reason').annotate(n=Count('id')).order_by('-n')
+            by_item.append({'sku': r['item__sku'], 'name': r['item__name'], 'count': r['n'], 'quantity': r['q'], 'shipped': out,
+                            'rate': round(r['q'] / out * 100, 1) if out else None, 'top_reason': reasons[0]['reason'] if reasons else ''})
+        done = returns.filter(status='회수완료')
+        by_result = [{'result': r['result'] or '(기록 없음)', 'count': r['n']} for r in done.values('result').annotate(n=Count('id')).order_by('-n')]
+        shipped_total = abs(sum(shipped.values())) if shipped else 0
+        returned_total = returns.aggregate(q=Coalesce(Sum('quantity'), 0))['q']
+        return Response({
+            'start_date': start.isoformat(), 'end_date': end.isoformat(),
+            'summary': {'returns': total, 'quantity': returned_total, 'shipped': shipped_total,
+                        'rate': round(returned_total / shipped_total * 100, 1) if shipped_total else None,
+                        'waiting': returns.filter(status='회수대기').count()},
+            'by_reason': by_reason, 'by_item': by_item, 'by_result': by_result,
         })
 
 

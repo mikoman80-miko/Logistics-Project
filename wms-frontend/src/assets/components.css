@@ -22,6 +22,10 @@
   .page {
     @apply flex flex-col gap-2.5 h-full;
   }
+  /* 화면 전체가 스크롤되는 페이지에서는 패널이 줄어들지 않고 내용만큼 커집니다. (표가 잘리지 않게) */
+  .page.overflow-y-auto > .panel {
+    @apply shrink-0;
+  }
 
   /* <div class="page-split"> : PC는 좌우 분할, 모바일은 세로 배치 */
   .page-split {

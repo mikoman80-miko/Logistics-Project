@@ -711,3 +711,16 @@ test('입고 검수 차이: 파손·덜 옴을 기록하면 발주서가 마감�
   await expect(admin).toHaveURL(/purchase-order/)
   await expect(admin.getByText('파손 1개')).toBeVisible()
 })
+
+test('재고·반품 분석: 재고 일수·장기 재고와 사유별 반품', async () => {
+  await admin.goto('/analysis')
+  const cable = admin.locator('tbody tr', { hasText: 'E2E-CABLE' }).first()
+  await expect(cable).toContainText('일')  // 출고가 있어 재고 일수가 계산됨
+  await admin.getByRole('button', { name: '30일', exact: true }).click()
+  await expect(admin.locator('th', { hasText: '30일 출고' })).toBeVisible()
+  await shot(admin, '36-stock-aging')
+  await admin.getByRole('button', { name: '반품 분석' }).click()
+  await expect(admin.locator('tbody tr', { hasText: '단순변심' }).first()).toBeVisible()
+  await expect(admin.locator('.today-card', { hasText: '반품률' })).toContainText('%')
+  await shot(admin, '37-return-analysis')
+})
