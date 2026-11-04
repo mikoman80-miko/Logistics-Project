@@ -102,6 +102,27 @@ myenv\Scripts\python backup_db.py    # db_backups 폴더에 저장
 
 테스트에는 `test_wms_db` 데이터베이스를 쓰며, 운영 데이터는 건드리지 않습니다.
 
+화면 자동 테스트는 테스트 전용 서버와 DB(`test_wms_e2e`)를 따로 띄워 실행합니다. 운영 서버를 켜 둔 채로 돌려도 됩니다.
+
+```powershell
+cd wms-frontend
+npm run e2e
+```
+
+### 백업 복원
+
+```powershell
+myenv\Scripts\python restore_check.py    # 복원 리허설: 가장 최근 백업을 test_wms_restore에 복원해 확인
+```
+
+실제로 운영 DB를 백업 시점으로 되돌릴 때 (지금 데이터는 사라집니다):
+
+1. `npm run stop`으로 서버를 멈춥니다.
+2. `myenv\Scripts\python backup_db.py`로 지금 상태도 백업해 둡니다.
+3. 복원합니다: `& "C:\Program Files\MariaDB 13.0in\mariadb.exe" -u wms_app -p wms_db -e "source db_backups/백업파일.sql"`
+4. `myenv\Scripts\python manage.py migrate`로 구조를 지금 코드에 맞춥니다.
+5. `npm run start`로 다시 실행합니다.
+
 ## 배포 전 확인
 
 - `.env`에서 `DJANGO_DEBUG=False`, `DJANGO_HTTPS=True`, `DJANGO_ALLOWED_HOSTS`를 실제 값으로 설정합니다.
