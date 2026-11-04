@@ -154,6 +154,14 @@
             <input v-model.number="editForm.safety_stock" type="number" min="0" class="field field-num w-[120px] mt-1 block" required />
             <span class="block mt-1 font-normal text-muted">현재 재고가 이 수량 이하이면 재고 부족으로 표시하고 알림을 보냅니다.</span>
           </label>
+          <div class="field-label">위치 보충 (기본 위치 {{ editForm.location_name || '없음' }})
+            <div class="flex items-center gap-1.5 mt-1 font-normal">
+              최소 <input v-model.number="editForm.pick_min" type="number" min="0" class="field field-num w-[80px]" aria-label="보충 최소" />
+              이하가 되면 최대 <input v-model.number="editForm.pick_max" type="number" min="0" class="field field-num w-[80px]" aria-label="보충 최대" />
+              까지 채움
+            </div>
+            <span class="block mt-1 font-normal text-muted">기본 위치의 재고가 최소 이하로 내려가면 현장 [위치 보충]에 다른 위치에서 가져오라고 안내합니다. 0이면 쓰지 않습니다.</span>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="submit" class="btn btn-primary btn-lg">저장</button>
@@ -299,10 +307,10 @@ const deleteItem = async (id) => {
 
 const editForm = ref(null);
 const openEditModal = (item) => {
-  editForm.value = { id: item.id, sku: item.sku, name: item.name, category: item.category, safety_stock: item.safety_stock };
+  editForm.value = { id: item.id, sku: item.sku, name: item.name, category: item.category, safety_stock: item.safety_stock, pick_min: item.pick_min, pick_max: item.pick_max, location_name: item.location_name };
 };
 const submitEdit = async () => {
-  const { id, sku, ...change } = editForm.value;
+  const { id, sku, location_name, ...change } = editForm.value;
   try {
     await axios.patch(`/api/inventory/items/${id}/`, change);
     toast.addToast(`[${sku}] 수정되었습니다.`, 'success');

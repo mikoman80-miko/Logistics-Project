@@ -122,6 +122,10 @@ class ItemSerializer(serializers.ModelSerializer):
         # 등록 시 따로 정하지 않으면 상품만 시리얼 관리, 구성품/부자재/사은품은 관리하지 않습니다.
         if not self.instance and 'serial_tracked' not in self.initial_data:
             attrs['serial_tracked'] = attrs.get('item_type', '상품') == '상품'
+        pick_min = attrs.get('pick_min', getattr(self.instance, 'pick_min', 0))
+        pick_max = attrs.get('pick_max', getattr(self.instance, 'pick_max', 0))
+        if pick_min and pick_max <= pick_min:
+            raise serializers.ValidationError({'pick_max': '보충 최대 수량은 최소 수량보다 커야 합니다.'})
         return attrs
 
 # 🌟 NEW: 신규 모델 Serializer 추가

@@ -50,6 +50,9 @@ class Item(models.Model):
     
     # 🌟 NEW: 재고 분석 및 알림을 위한 필드 추가
     safety_stock = models.IntegerField(default=5) # 안전 재고 (이하로 떨어지면 슬랙 알림)
+    # 위치 보충: 기본 위치(꺼내는 자리)의 재고가 최소 이하로 내려가면 다른 위치에서 최대까지 채우라고 안내합니다. 0이면 쓰지 않습니다.
+    pick_min = models.PositiveIntegerField(default=0)
+    pick_max = models.PositiveIntegerField(default=0)
     abc_grade = models.CharField(max_length=10, blank=True, null=True) # A, B, C 등급 (장기 체화 분석용)
     is_active = models.BooleanField(default=True) # 삭제해도 이력을 남기기 위해 사용 중지로 처리
     

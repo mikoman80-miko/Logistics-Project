@@ -517,8 +517,26 @@ class ItemViewSet(viewsets.ModelViewSet):
     def move_stock(self, request, pk=None):
         """위치 간 재고 이동. 수량 상품은 수량으로, 시리얼 상품은 옮길 시리얼 번호로 옮깁니다. from이 비어 있으면 '위치 미지정' 재고에서 옮깁니다."""
         item = Item.objects.select_for_update().get(pk=self.get_object().pk)
-        source = WarehouseLocation.objects.filter(pk=to_int(request.data.get('from'))).first() if request.data.get('from') else None
         target = WarehouseLocation.objects.filter(pk=to_int(request.data.get('to')), is_active=True).first()
+        return self._move(request, item, target, '재고 이동')
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def replenishment(self, request):
+        # 기본 위치(꺼내는 자리)를 채워야 하는 상품 목록. 현장 [위치 보충] 화면에서 씁니다.
+        return Response(replenishment_tasks())
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def replenish(self, request, pk=None):
+        # 현장작업자도 할 수 있는 이동: 다른 위치의 재고를 이 상품의 기본 위치로만 옮깁니다.
+        item = Item.objects.select_for_update().get(pk=self.get_object().pk)
+        if not item.location_id:
+            return error_response(f'[{item.sku}] 기본 위치가 없어 보충할 수 없습니다.')
+        if not request.data.get('from'):
+            return error_response('가져올 위치를 고르세요.')
+        return self._move(request, item, item.location, '위치 보충')
+
+    def _move(self, request, item, target, label):
+        source = WarehouseLocation.objects.filter(pk=to_int(request.data.get('from'))).first() if request.data.get('from') else None
         if not target:
             return error_response('옮길 보관 위치를 고르세요.')
         if source == target:
@@ -544,7 +562,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         ItemSerial.objects.filter(id__in=[s.id for s in serials]).update(location=target)
         where = source.full_code if source else '미지정'
         InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, user=request.user, work='이동',
-                                    description=f'재고 이동: [{where}] ➔ [{target.full_code}] {quantity}개' + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''))
+                                    description=f'{label}: [{where}] ➔ [{target.full_code}] {quantity}개' + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''))
         return Response({'message': f'[{item.sku}] {quantity}개를 {target.full_code}로 옮겼습니다.', 'item': self.get_serializer(item).data})
 
     def create(self, request, *args, **kwargs):
@@ -1521,6 +1539,39 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
 STALLED_HOURS = 24  # 출고 후 이 시간이 지나도 배송완료가 아니면 확인이 필요합니다.
 
 
+def replenishment_tasks():
+    """기본 위치의 재고가 보충 최소 이하인 상품과, 어느 위치에서 몇 개를 가져오면 되는지.
+    다른 위치에 재고가 없으면 sources가 비어 있습니다. (발주가 필요)"""
+    items = (Item.objects.filter(is_active=True, pick_min__gt=0, location__isnull=False)
+             .select_related('location').prefetch_related('stocks__location'))
+    tasks = []
+    for item in items:
+        here = next((st.quantity for st in item.stocks.all() if st.location_id == item.location_id), 0)
+        if here > item.pick_min:
+            continue
+        need = item.pick_max - here
+        others = sorted((st for st in item.stocks.all() if st.location_id != item.location_id and st.quantity > 0), key=lambda st: -st.quantity)
+        sources = []
+        for st in others:
+            if need - sum(src['take'] for src in sources) <= 0:
+                break
+            take = min(st.quantity, need - sum(src['take'] for src in sources))
+            serials = []
+            if item.serial_tracked:
+                serials = list(item.serials.filter(status=IN_STOCK, location_id=st.location_id).order_by('serial_number').values_list('serial_number', flat=True)[:take])
+                take = len(serials)
+            if take:
+                sources.append({'location': st.location_id, 'location_name': st.location.full_code, 'barcode': st.location.barcode,
+                                'quantity': st.quantity, 'take': take, 'serials': serials})
+        tasks.append({
+            'item': item.id, 'sku': item.sku, 'name': item.name, 'serial_tracked': item.serial_tracked,
+            'target': item.location_id, 'target_name': item.location.full_code, 'target_barcode': item.location.barcode,
+            'here': here, 'pick_min': item.pick_min, 'pick_max': item.pick_max, 'need': need, 'sources': sources,
+        })
+    # 채울 수 있는 것 먼저, 꺼내는 자리가 빈 것 먼저
+    return sorted(tasks, key=lambda t: (not t['sources'], t['here'], t['target_name']))
+
+
 def overdue_purchase_orders(limit=10):
     """입고 예정일이 지났는데 아직 다 받지 못한 발주 (오늘 할 일, 슬랙 알림에서 함께 씀)"""
     today = timezone.localdate()
@@ -1571,6 +1622,7 @@ class TodayAPIView(APIView):
             'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
             'low_stock': low_stock,
+            'replenish': len(replenishment_tasks()),
             'setup': {
                 'locations': WarehouseLocation.objects.exists(),
                 'items': Item.objects.filter(is_active=True).exists(),

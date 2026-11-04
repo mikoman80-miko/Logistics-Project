@@ -1386,3 +1386,53 @@ class ShipDueTests(BaseCase):
         self.assertIn(res.data['order']['due_status'], ('today', 'later', 'overdue'))
         self.client.post(f'{ORDERS}{master.id}/urgent/', {'urgent': False}, format='json')
         self.assertFalse(SalesOrder.objects.filter(is_urgent=True).exists())
+
+
+class ReplenishmentTests(BaseCase):
+    URL = '/api/inventory/items/replenishment/'
+
+    def setUp(self):
+        super().setUp()
+        self.face = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        self.reserve = WarehouseLocation.objects.create(zone='B', rack='R9', tier=3)
+        Item.objects.filter(pk=self.item.pk).update(quantity=20, location=self.face, pick_min=3, pick_max=10)
+        ItemStock.objects.create(item=self.item, location=self.face, quantity=2)
+        ItemStock.objects.create(item=self.item, location=self.reserve, quantity=18)
+
+    def test_task_and_worker_replenish(self):
+        self.client.force_authenticate(self.worker)
+        tasks = self.client.get(self.URL).data
+        self.assertEqual(len(tasks), 1)
+        task = tasks[0]
+        self.assertEqual((task['here'], task['need'], task['sources'][0]['take'], task['sources'][0]['location']), (2, 8, 8, self.reserve.id))
+        self.assertEqual(self.client.get('/api/inventory/today/').data['replenish'], 1)
+        # 작업자는 일반 이동은 못 하고, 기본 위치로 채우는 보충만 합니다.
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.reserve.id, 'to': self.face.id, 'quantity': 8}, format='json').status_code, 403)
+        res = self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'from': self.reserve.id, 'quantity': 8}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(ItemStock.objects.get(item=self.item, location=self.face).quantity, 10)
+        self.assertEqual(self.client.get(self.URL).data, [])
+        log = InventoryLog.objects.get(work='이동')
+        self.assertTrue(log.description.startswith('위치 보충'))
+        self.assertEqual(log.user, self.worker)
+
+    def test_validation(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.patch(f'{ITEMS}{self.item.id}/', {'pick_min': 5, 'pick_max': 5}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'quantity': 1}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'from': self.reserve.id, 'quantity': 99}, format='json').status_code, 400)
+        # 다른 위치에 재고가 없으면 가져올 곳 없이 표시합니다.
+        ItemStock.objects.filter(location=self.reserve).update(quantity=0)
+        self.assertEqual(self.client.get(self.URL).data[0]['sources'], [])
+
+    def test_serial_item_lists_serials(self):
+        Item.objects.filter(pk=self.item.pk).update(serial_tracked=True)
+        for n in range(3):
+            ItemSerial.objects.create(item=self.item, serial_number=f'R{n}', status='재고보유', location=self.reserve)
+        self.client.force_authenticate(self.worker)
+        source = self.client.get(self.URL).data[0]['sources'][0]
+        self.assertEqual((source['take'], source['serials']), (3, ['R0', 'R1', 'R2']))
+        res = self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'from': self.reserve.id, 'serials': ['R0', 'R1']}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(ItemSerial.objects.filter(location=self.face).count(), 2)

@@ -8,7 +8,10 @@
         <span class="text-4xl">대기 <strong class="text-primary text-6xl">{{ menu.count() }}</strong>건</span>
       </button>
     </div>
-    <button class="work-btn shrink-0" @click="router.push('/work/today')">4번 키 · 오늘 내 작업 보기</button>
+    <div class="grid grid-cols-2 gap-8 shrink-0">
+      <button class="work-btn" @click="router.push('/work/today')">4번 키 · 오늘 내 작업 보기</button>
+      <button class="work-btn" :class="{ 'work-btn-primary': today.replenish > 0 }" @click="router.push('/work/replenish')">5번 키 · 위치 보충 <b>{{ today.replenish ?? '-' }}</b>건</button>
+    </div>
     </div>
   </WorkLayout>
 </template>
@@ -32,6 +35,7 @@ const onKeydown = (event) => {
   // 비밀번호 칸 등에 숫자를 입력할 때는 이동하지 않습니다.
   if (event.target.closest?.('input, textarea, select, .modal-overlay')) return
   if (event.key === '4') return router.push('/work/today')
+  if (event.key === '5') return router.push('/work/replenish')
   const menu = menus[Number(event.key) - 1]
   if (menu) router.push(menu.path)
 }
