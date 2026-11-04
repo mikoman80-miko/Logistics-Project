@@ -14,8 +14,8 @@
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
       <button v-for="card in cards" :key="card.title" class="today-card" @click="router.push(card.path)">
         <span class="text-heading font-bold">{{ card.title }}</span>
-        <span class="text-[40px] font-bold leading-none my-2" :class="card.count() > 0 ? card.color : 'text-muted'">{{ card.count() }}</span>
-        <span class="text-muted">{{ card.hint }}</span>
+        <span class="text-[40px] font-bold leading-none my-2" :class="card.count() > 0 ? (card.alert?.() ? 'text-danger' : card.color) : 'text-muted'">{{ card.count() }}</span>
+        <span :class="card.alert?.() ? 'text-danger font-bold' : 'text-muted'">{{ typeof card.hint === 'function' ? card.hint() : card.hint }}</span>
       </button>
     </div>
 
@@ -92,10 +92,15 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
+const today = ref({ orders: 0, orders_due: { overdue: 0, today: 0, later: 0, urgent: 0, cutoff: '' }, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
 
 const cards = [
-  { title: '출고 대기', count: () => today.value.orders, hint: '스캔 후 출고할 주문', path: '/orders', color: 'text-primary' },
+  { title: '출고 대기', count: () => today.value.orders, path: '/orders', color: 'text-primary', alert: () => today.value.orders_due.overdue > 0,
+    hint: () => {
+      const due = today.value.orders_due
+      if (!today.value.orders) return '스캔 후 출고할 주문'
+      return [due.overdue && `마감 지남 ${due.overdue}`, `오늘 ${due.cutoff} 마감 ${due.today}`, due.urgent && `긴급 ${due.urgent}`].filter(Boolean).join(' · ')
+    } },
   { title: '입고 예정', count: () => today.value.purchase_orders, hint: '아직 다 받지 못한 발주', path: '/purchase-order', color: 'text-primary' },
   { title: '반품 회수 대기', count: () => today.value.returns, hint: '돌아올 기기', path: '/returns', color: 'text-warning' },
   { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품 · 누르면 발주 제안', path: '/purchase-order?suggest=1', color: 'text-danger' },

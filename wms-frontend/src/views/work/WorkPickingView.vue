@@ -5,10 +5,11 @@
       <div class="text-4xl font-bold">함께 꺼낼 주문을 누르세요 <span class="text-3xl text-muted">({{ chosen.length }}건 선택)</span></div>
       <div v-if="orders.length === 0" class="work-empty">출고 대기 중인 주문이 없습니다.</div>
       <div class="flex flex-col gap-3 overflow-y-auto min-h-0">
-        <button v-for="row in orders" :key="row.id" class="work-row" :class="{ 'bg-primary-soft! border-primary!': chosen.includes(row.id) }" @click="toggle(row.id)">
-          <span class="font-bold">{{ chosen.includes(row.id) ? '☑' : '☐' }} {{ row.order_no }}</span>
+        <button v-for="row in orders" :key="row.id" class="work-row work-row-due" :class="{ 'bg-primary-soft! border-primary!': chosen.includes(row.id) }" @click="toggle(row.id)">
+          <span class="font-bold">{{ chosen.includes(row.id) ? '☑' : '☐' }} <b v-if="row.is_urgent" class="work-urgent">긴급</b>{{ row.order_no }}</span>
           <span>{{ row.customer }}</span>
           <span class="text-muted">{{ row.items.length }}종 {{ row.items.reduce((s, l) => s + l.quantity, 0) }}개</span>
+          <span v-if="dueLabel(row, now)" class="text-2xl font-bold" :class="toneClass[dueLabel(row, now).tone]">{{ dueLabel(row, now).text }}</span>
         </button>
       </div>
       <div class="grid grid-cols-2 gap-4 shrink-0">
@@ -70,6 +71,7 @@ import { useWorkFeedback } from '../../composables/useWorkFeedback'
 import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { useDialogStore } from '../../stores/dialogStore'
 import { buildPickList } from '../../utils/pickList'
+import { dueLabel, sortByDue, toneClass, useNow } from '../../utils/due'
 
 // 집품은 재고를 바꾸지 않습니다. 꺼낸 개수만 세고, 실제 출고는 주문별 출고 화면에서 합니다.
 // 화면을 벗어났다 돌아와도 이어서 하도록 진행 상황을 브라우저에 저장합니다.
@@ -78,6 +80,7 @@ const router = useRouter()
 const dialog = useDialogStore()
 const { ok, fail } = useWorkFeedback()
 const location = useLocationCheck()
+const now = useNow()
 const orders = ref([])
 const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
 const chosen = ref(saved?.chosen || [])
@@ -144,7 +147,7 @@ const finish = () => {
 }
 
 onMounted(async () => {
-  orders.value = (await axios.get('/api/inventory/orders/', { params: { status: '출고대기' } })).data.reverse()
+  orders.value = sortByDue((await axios.get('/api/inventory/orders/', { params: { status: '출고대기' } })).data)
   // 그사이 출고되거나 취소된 주문은 집품에서 뺍니다.
   chosen.value = chosen.value.filter(id => orders.value.some(o => o.id === id))
   if (started.value && chosen.value.length === 0) reset()

@@ -172,7 +172,7 @@ const doneCards = computed(() => {
 const backlogCards = computed(() => {
   const b = backlog.value
   return [
-    { title: '출고 대기', value: b.orders, hint: `이전 날짜에서 넘어온 주문 ${b.orders_carried}건`, color: 'text-danger', path: '/orders' },
+    { title: '출고 대기', value: b.orders, hint: `이월 ${b.orders_carried}건` + (b.orders_due ? ` · 마감 지남 ${b.orders_due.overdue}건 · 긴급 ${b.orders_due.urgent}건` : ''), color: 'text-danger', path: '/orders' },
     { title: '회수 대기', value: b.returns, hint: '반품 회수를 기다리는 건', color: 'text-warning', path: '/returns' },
     { title: '입고 대기', value: b.purchase_orders, hint: `예정일 지남 ${b.overdue_purchase_orders}건`, color: 'text-warning', path: '/purchase-order' },
     { title: '택배 확인', value: b.carrier_issues.count, hint: '운송장·회수 요청 실패, 배송 지연', color: 'text-danger', path: '/today' },

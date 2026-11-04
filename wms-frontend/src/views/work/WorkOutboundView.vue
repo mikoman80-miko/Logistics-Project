@@ -7,10 +7,11 @@
         <button v-if="orders.length > 1" class="work-btn work-btn-primary" @click="router.push('/work/picking')">여러 주문 한 번에 꺼내기 (집품)</button>
       </div>
       <div v-if="orders.length === 0" class="work-empty">출고 대기 중인 주문이 없습니다.</div>
-      <button v-for="row in orders" :key="row.id" class="work-row" @click="order = row">
-        <span class="font-bold">{{ row.order_no }}</span>
+      <button v-for="row in orders" :key="row.id" class="work-row work-row-due" :class="{ 'border-danger!': row.is_urgent }" @click="order = row">
+        <span class="font-bold"><b v-if="row.is_urgent" class="work-urgent">긴급</b>{{ row.order_no }}</span>
         <span>{{ row.customer }}</span>
         <span class="text-muted">{{ row.items.length }}종 {{ totalQuantity(row) }}개<b v-if="row.bundle_orders.length" class="text-primary"> · 묶음</b></span>
+        <span v-if="dueLabel(row, now)" class="text-2xl font-bold" :class="toneClass[dueLabel(row, now).tone]">{{ dueLabel(row, now).text }}</span>
       </button>
     </div>
 
@@ -86,11 +87,13 @@ import { useDialogStore } from '../../stores/dialogStore'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
 import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { apiErrorMessage } from '../../utils/apiError'
+import { dueLabel, sortByDue, toneClass, useNow } from '../../utils/due'
 
 const { ok, fail } = useWorkFeedback()
 const location = useLocationCheck()
 const dialog = useDialogStore()
 const router = useRouter()
+const now = useNow()
 const orders = ref([])
 const order = ref(null)
 const contextSku = ref('')
@@ -118,7 +121,7 @@ const prompt = computed(() => {
 
 const load = async () => {
   const res = await axios.get('/api/inventory/orders/', { params: { status: '출고대기' } })
-  orders.value = res.data.reverse()
+  orders.value = sortByDue(res.data)
 }
 
 const applyResult = (data) => {

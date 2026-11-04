@@ -189,6 +189,9 @@ CARRIER_CALLBACK_URL = os.environ.get('CARRIER_CALLBACK_URL', '')
 
 # 발주 제안: 발주 후 물건이 들어오기까지 걸리는 날 수
 REORDER_LEAD_DAYS = int(os.environ.get('REORDER_LEAD_DAYS', '7'))
+# 출고 마감: 이 시각 전에 들어온 주문은 그날 출고합니다. 주말 출고를 하면 SHIP_ON_WEEKENDS=1
+SHIP_CUTOFF_TIME = os.environ.get('SHIP_CUTOFF_TIME', '15:00')
+SHIP_ON_WEEKENDS = os.environ.get('SHIP_ON_WEEKENDS', '0') == '1'
 
 # 운영 환경에서 HTTPS를 쓸 때 DJANGO_HTTPS=True로 켭니다.
 if env_bool('DJANGO_HTTPS'):

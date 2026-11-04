@@ -148,6 +148,7 @@ class SalesOrder(ShippingInfo):
     customer = models.CharField(max_length=100)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='출고대기', db_index=True)
     note = models.CharField(max_length=200, blank=True, default='')
+    is_urgent = models.BooleanField(default=False)  # 긴급: 현장 출고 목록 맨 위에 보입니다.
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)

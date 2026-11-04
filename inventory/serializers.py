@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.utils import timezone
 import re
 
-from . import carrier
+from . import carrier, due
 from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 
 def next_document_number(model, field, prefix):
@@ -197,6 +197,8 @@ class SalesOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
     carrier_events = serializers.SerializerMethodField()
     bundle_orders = serializers.SerializerMethodField()
     split_from_no = serializers.CharField(source='split_from.order_no', read_only=True, default='')
+    due_at = serializers.SerializerMethodField()
+    due_status = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrder
@@ -206,6 +208,12 @@ class SalesOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
     def get_carrier_events(self, obj):
         # 묶인 주문은 대표 주문의 배송 이력을 보여줍니다.
         return CarrierEventSerializer((obj.bundle_parent or obj).carrier_events.all(), many=True).data
+
+    def get_due_at(self, obj):
+        return timezone.localtime(due.due_at(obj.created_at)).isoformat() if obj.created_at else None
+
+    def get_due_status(self, obj):
+        return due.due_status(obj) if obj.created_at else ''
 
     def get_bundle_orders(self, obj):
         # 같은 상자로 나가는 주문번호 (대표 주문이 먼저). 묶음이 아니면 빈 목록

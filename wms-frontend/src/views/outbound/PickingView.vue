@@ -72,23 +72,25 @@
                 <th width="165">주문번호</th>
                 <th>거래처/고객</th>
                 <th width="50">품목</th>
+                <th width="150">출고 마감</th>
                 <th width="70">택배</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="orders.length === 0" class="empty-row">
-                <td colspan="5">{{ isFiltered ? '조건에 맞는 주문이 없습니다.' : '주문이 없습니다. [주문 등록]을 눌러 추가하세요.' }}</td>
+                <td colspan="6">{{ isFiltered ? '조건에 맞는 주문이 없습니다.' : '주문이 없습니다. [주문 등록]을 눌러 추가하세요.' }}</td>
               </tr>
               <tr v-for="order in orders" :key="order.id" class="is-clickable" :class="{ 'is-selected': selected?.id === order.id }" @click="selected = order">
                 <td class="text-center" @click.stop>
                   <input v-if="canBundle(order)" v-model="checkedIds" type="checkbox" :value="order.id" :aria-label="`${order.order_no} 선택`" />
                 </td>
                 <td class="text-center font-bold text-primary whitespace-nowrap">{{ order.order_no }}</td>
-                <td class="truncate">{{ order.customer }}
+                <td class="truncate"><span v-if="order.is_urgent" class="mr-1 px-1 text-caption font-bold text-white bg-danger">긴급</span>{{ order.customer }}
                   <span v-if="order.bundle_orders.length" class="ml-1 px-1 text-caption font-bold text-primary border border-primary">묶음</span>
                   <span v-else-if="bundleCandidates.has(order.id)" class="ml-1 px-1 text-caption text-warning border border-warning" title="같은 배송지의 출고대기 주문이 있습니다">묶음 가능</span>
                 </td>
                 <td class="text-right">{{ order.items.length }}종</td>
+                <td class="text-center truncate" :class="dueLabel(order, now) && toneClass[dueLabel(order, now).tone]">{{ dueLabel(order, now)?.text.replace(' 마감 · ', ' · ') || '-' }}</td>
                 <td class="text-center truncate" :class="order.carrier_error ? 'text-danger font-bold' : ''">{{ order.carrier_error ? '오류' : (order.carrier_status || '-') }}</td>
               </tr>
             </tbody>
@@ -101,6 +103,7 @@
           <span class="panel-title">[{{ selected.order_no }}] {{ selected.customer }} ({{ selected.status }})</span>
           <div v-if="selected.status === '출고대기'" class="flex gap-1">
             <button class="btn btn-success btn-sm" @click="router.push('/work/outbound')">현장 화면에서 출고</button>
+            <button class="btn btn-sm" :class="{ 'btn-danger': !selected.is_urgent }" :disabled="isSaving" @click="toggleUrgent">{{ selected.is_urgent ? '긴급 해제' : '긴급 지정' }}</button>
             <button class="btn btn-sm" @click="openEdit">주문 수정</button>
             <button class="btn btn-danger btn-sm" @click="cancelOrder">주문 취소</button>
           </div>
@@ -165,8 +168,10 @@ import AddressImportModal from '../../components/AddressImportModal.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
+import { dueLabel, toneClass, useNow } from '../../utils/due'
 
 const router = useRouter()
+const now = useNow()
 const route = useRoute()
 const store = useInventoryStore()
 const toast = useToastStore()
@@ -304,6 +309,19 @@ const bundleOrders = async () => {
     selected.value = orders.value.find(o => o.id === res.data.order.id) || res.data.order
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '묶음배송 처리 중 오류가 발생했습니다.'), 'error', 6000)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+const toggleUrgent = async () => {
+  isSaving.value = true
+  try {
+    const res = await axios.post(`/api/inventory/orders/${selected.value.id}/urgent/`, { urgent: !selected.value.is_urgent })
+    toast.addToast(res.data.message, 'success')
+    await loadOrders()
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '긴급 표시를 바꾸지 못했습니다.'), 'error')
   } finally {
     isSaving.value = false
   }

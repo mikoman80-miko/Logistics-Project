@@ -1341,3 +1341,48 @@ class DailyCloseTests(WorkerReportTests):
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.client.get(self.DAILY).status_code, 403)
         self.assertEqual(self.client.post(self.DAILY, {}, format='json').status_code, 403)
+
+
+@override_settings(SHIP_CUTOFF_TIME='15:00', SHIP_ON_WEEKENDS=False)
+class ShipDueTests(BaseCase):
+    def at(self, text):
+        return timezone.make_aware(datetime.strptime(text, '%Y-%m-%d %H:%M'))
+
+    def test_due_at_cutoff_and_weekend(self):
+        from . import due
+        cases = [
+            ('2026-11-04 09:00', '2026-11-04 15:00'),  # 수요일 마감 전 → 그날
+            ('2026-11-04 15:00', '2026-11-05 15:00'),  # 마감 시각부터는 다음 날
+            ('2026-11-06 16:00', '2026-11-09 15:00'),  # 금요일 마감 후 → 월요일
+            ('2026-11-07 10:00', '2026-11-09 15:00'),  # 토요일 → 월요일
+        ]
+        for created, expected in cases:
+            self.assertEqual(timezone.localtime(due.due_at(self.at(created))).strftime('%Y-%m-%d %H:%M'), expected, created)
+        with self.settings(SHIP_ON_WEEKENDS=True):
+            self.assertEqual(timezone.localtime(due.due_at(self.at('2026-11-07 10:00'))).strftime('%Y-%m-%d'), '2026-11-07')
+
+    def test_status_and_today_summary(self):
+        from . import due
+        order = SalesOrder.objects.create(order_no='ORD-D1', customer='고객')
+        SalesOrder.objects.filter(pk=order.pk).update(created_at=self.at('2026-11-04 09:00'))
+        order.refresh_from_db()
+        self.assertEqual(due.due_status(order, self.at('2026-11-04 10:00')), 'today')
+        self.assertEqual(due.due_status(order, self.at('2026-11-04 15:30')), 'overdue')
+        self.assertEqual(due.due_status(order, self.at('2026-11-03 10:00')), 'later')
+        self.client.force_authenticate(self.worker)
+        data = self.client.get('/api/inventory/today/').data['orders_due']
+        self.assertEqual((data['overdue'], data['cutoff']), (1, '15:00'))  # 테스트 실행일은 2026-11-04 이후
+
+    def test_urgent_toggle_follows_bundle(self):
+        master = SalesOrder.objects.create(order_no='ORD-M', customer='고객')
+        member = SalesOrder.objects.create(order_no='ORD-N', customer='고객', bundle_parent=master)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(f'{ORDERS}{member.id}/urgent/', {'urgent': True}, format='json').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(f'{ORDERS}{member.id}/urgent/', {'urgent': True}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['order']['is_urgent'])
+        self.assertEqual(list(SalesOrder.objects.order_by('id').values_list('is_urgent', flat=True)), [True, True])
+        self.assertIn(res.data['order']['due_status'], ('today', 'later', 'overdue'))
+        self.client.post(f'{ORDERS}{master.id}/urgent/', {'urgent': False}, format='json')
+        self.assertFalse(SalesOrder.objects.filter(is_urgent=True).exists())

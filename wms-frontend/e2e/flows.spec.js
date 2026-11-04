@@ -540,3 +540,26 @@ test('일일 마감: 오늘 처리 실적과 남은 일을 저장하고 기록�
   const [download] = await Promise.all([admin.waitForEvent('download'), admin.getByRole('button', { name: '엑셀 다운로드' }).click()])
   expect(XLSX.readFile(await download.path()).SheetNames).toEqual(['요약', '출고대기', '작업자', '재고부족'])
 })
+
+test('긴급 주문과 출고 마감: 관리자가 긴급 지정하면 현장 출고 목록 맨 위', async () => {
+  await admin.goto('/orders')
+  await orderRow(admin, '집품고객B').click()
+  await admin.getByRole('button', { name: '긴급 지정' }).click()
+  await toast(admin, '긴급 지정')
+  await expect(orderRow(admin, '집품고객B')).toContainText('긴급')
+  await expect(orderRow(admin, '집품고객B').locator('td').nth(4)).toContainText(/남음|지남|마감/)
+
+  await worker.goto('/work/outbound')
+  const first = worker.locator('button.work-row').first()
+  await expect(first).toContainText('집품고객B')
+  await expect(first.locator('.work-urgent')).toHaveText('긴급')
+  await expect(first).toContainText('마감')
+  await shot(worker, '30-work-urgent')
+
+  await admin.goto('/today')
+  await expect(admin.locator('.today-card', { hasText: '출고 대기' })).toContainText('긴급 1')
+  await admin.goto('/orders')
+  await orderRow(admin, '집품고객B').click()
+  await admin.getByRole('button', { name: '긴급 해제' }).click()
+  await toast(admin, '긴급 해제')
+})

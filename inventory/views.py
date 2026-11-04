@@ -30,7 +30,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from . import carrier, stock
+from . import carrier, due, stock
 from .carrier import CarrierError
 from .models import DailyClose, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
@@ -131,7 +131,7 @@ def split_backorder(order, user):
         return None, None  # 모두 스캔했으면 보통 출고와 같습니다.
 
     backorder = SalesOrder.objects.create(
-        order_no=next_document_number(SalesOrder, 'order_no', 'ORD'), customer=order.customer, split_from=order, created_by=user,
+        order_no=next_document_number(SalesOrder, 'order_no', 'ORD'), customer=order.customer, split_from=order, created_by=user, is_urgent=order.is_urgent,
         note=f'{order.order_no}의 남은 수량' + (f' / {order.note}' if order.note else ''),
         **{key: getattr(order, key) for key in SHIPPING_FIELDS})
     SalesOrderItem.objects.bulk_create([SalesOrderItem(order=backorder, item_id=line.item_id, quantity=line.quantity - line.picked_quantity) for line in short])
@@ -945,6 +945,18 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
             return error_response(error)
         return self._order_response(order, message)
 
+    @action(detail=True, methods=['post'])
+    def urgent(self, request, pk=None):
+        # 긴급 표시를 켜고 끕니다. 묶음배송이면 같은 상자의 주문도 함께 바꿉니다.
+        order = self.get_object()
+        if order.status != '출고대기':
+            return error_response(f'{order.status} 상태의 주문은 바꿀 수 없습니다.')
+        value = request.data.get('urgent') in (True, 'true', '1', 1)
+        master = order.bundle_parent or order
+        SalesOrder.objects.filter(Q(pk=master.pk) | Q(bundle_parent=master)).update(is_urgent=value)
+        order.refresh_from_db()
+        return self._order_response(order, f"주문 {order.order_no} 긴급 {'지정' if value else '해제'}")
+
     @action(detail=False, methods=['post'])
     def import_addresses(self, request):
         """엑셀로 고친 배송지를 한 번에 반영합니다. apply가 아니면 미리보기만 합니다.
@@ -1555,6 +1567,7 @@ class TodayAPIView(APIView):
             'carrier_issues': carrier_issues(),
             'overdue_purchase_orders': overdue_purchase_orders(),
             'orders': SalesOrder.objects.filter(status='출고대기').count(),
+            'orders_due': due.summary(SalesOrder.objects.filter(status='출고대기').only('status', 'created_at', 'is_urgent')),
             'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
             'low_stock': low_stock,
@@ -1709,6 +1722,7 @@ def daily_summary(day):
         'backlog': {
             'orders': pending_orders.count(),
             'orders_carried': pending_orders.filter(created_at__lt=start).count(),  # 그날 이전에 들어와 아직 못 나간 주문
+            'orders_due': due.summary(pending_orders.only('status', 'created_at', 'is_urgent')),
             'pending_orders': [{'order_no': o.order_no, 'customer': o.customer, 'created_at': timezone.localtime(o.created_at).isoformat()}
                                for o in pending_orders.order_by('created_at')[:20]],
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
