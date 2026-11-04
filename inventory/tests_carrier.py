@@ -10,8 +10,10 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import requests
+from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.db import OperationalError
 from django.test import LiveServerTestCase, override_settings
 from rest_framework.test import APITestCase
 
@@ -169,6 +171,14 @@ class WebhookTests(CarrierCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.carrier_status, '배송중')
         self.assertEqual(self.order.carrier_events.count(), 2)
+
+    def test_deadlock_is_retried_then_reported_as_busy(self):
+        deadlock = OperationalError(1213, 'Deadlock found when trying to get lock')
+        with patch('inventory.views.save_carrier_event', side_effect=[deadlock, True]) as saver, patch('inventory.views.sleep'):
+            self.assertEqual(self.post_event(self.event('집하', 'e1', '2026-11-04T09:00:00+09:00')).status_code, 200)
+        self.assertEqual(saver.call_count, 2)
+        with patch('inventory.views.save_carrier_event', side_effect=deadlock), patch('inventory.views.sleep'):
+            self.assertEqual(self.post_event(self.event('집하', 'e2', '2026-11-04T09:00:00+09:00')).status_code, 503)
 
     def test_rejects_bad_signature_and_unknown_waybill(self):
         self.assertEqual(self.post_event(self.event('집하', 'e1', '2026-11-04T09:00:00+09:00'), secret='wrong').status_code, 401)

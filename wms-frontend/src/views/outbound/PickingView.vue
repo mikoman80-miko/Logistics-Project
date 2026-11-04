@@ -44,7 +44,7 @@
     <AddressImportModal v-if="importOpen" @close="importOpen = false" @saved="loadOrders" />
 
     <div class="page-split">
-      <div class="panel w-full md:w-[420px] shrink-0">
+      <div class="panel w-full md:w-[520px] shrink-0">
         <div class="panel-header">
           <span class="panel-title">출고 주문 목록</span>
           <div class="flex gap-1">
@@ -69,7 +69,7 @@
             <thead>
               <tr>
                 <th width="28"></th>
-                <th width="150">주문번호</th>
+                <th width="165">주문번호</th>
                 <th>거래처/고객</th>
                 <th width="50">품목</th>
                 <th width="70">택배</th>
@@ -83,7 +83,7 @@
                 <td class="text-center" @click.stop>
                   <input v-if="canBundle(order)" v-model="checkedIds" type="checkbox" :value="order.id" :aria-label="`${order.order_no} 선택`" />
                 </td>
-                <td class="text-center font-bold text-primary">{{ order.order_no }}</td>
+                <td class="text-center font-bold text-primary whitespace-nowrap">{{ order.order_no }}</td>
                 <td class="truncate">{{ order.customer }}
                   <span v-if="order.bundle_orders.length" class="ml-1 px-1 text-caption font-bold text-primary border border-primary">묶음</span>
                   <span v-else-if="bundleCandidates.has(order.id)" class="ml-1 px-1 text-caption text-warning border border-warning" title="같은 배송지의 출고대기 주문이 있습니다">묶음 가능</span>

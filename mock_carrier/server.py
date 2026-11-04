@@ -39,7 +39,7 @@ API_KEY = os.environ.get('CARRIER_API_KEY', 'mock-carrier-key')
 WEBHOOK_SECRET = os.environ.get('CARRIER_WEBHOOK_SECRET', 'mock-webhook-secret')
 STEP_SECONDS = int(os.environ.get('MOCK_CARRIER_STEP_SECONDS', '60'))  # 단계가 자동으로 넘어가는 간격
 FAIL_RATE = float(os.environ.get('MOCK_CARRIER_FAIL_RATE', '0'))  # 일시 장애를 흉내 내는 확률 (0~1)
-DB_PATH = BASE_DIR / 'carrier.sqlite3'
+DB_PATH = Path(os.environ.get('MOCK_CARRIER_DB') or BASE_DIR / 'carrier.sqlite3')  # 테스트 환경은 다른 파일을 씁니다
 RETRY_WAITS = (0, 3, 10)  # 웹훅 재시도 간격(초)
 
 # 단계와 그때의 위치 안내

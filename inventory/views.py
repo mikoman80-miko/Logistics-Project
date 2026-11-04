@@ -2,17 +2,19 @@ import csv
 import logging
 import re
 from datetime import datetime, time, timedelta
+from time import sleep
 from io import StringIO
 
 import requests # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Count, DateField, DateTimeField, F, Func, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.http import StreamingHttpResponse
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -1337,8 +1339,10 @@ class DashboardAPIView(APIView):
         return Response({'trend': trend_data, 'occupancy': occupancy_data, 'today_count': today_count, 'top_moving': top_moving_data}, status=status.HTTP_200_OK)
 
 
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
 class CarrierWebhookView(APIView):
     # 택배사가 배송·회수 단계가 바뀔 때마다 호출합니다. 로그인 대신 HMAC 서명으로 확인합니다.
+    # WMS가 송장을 취소하는 도중에 그 취소 알림이 바로 들어오면 DB 잠금이 엇갈릴 수 있어, 잠깐 뒤 다시 시도합니다.
     authentication_classes = []
     permission_classes = [AllowAny]
 
@@ -1346,6 +1350,19 @@ class CarrierWebhookView(APIView):
         if not carrier.verify_signature(request.body, request.headers.get('X-Carrier-Signature', '')):
             return Response({'result': 'ERROR', 'message': '서명이 올바르지 않습니다.'}, status=status.HTTP_401_UNAUTHORIZED)
         event = request.data if isinstance(request.data, dict) else {}
+        for attempt in range(3):
+            try:
+                with transaction.atomic():
+                    return self.apply(event)
+            except OperationalError as exc:
+                if exc.args and exc.args[0] in (1213, 1205):  # 교착 상태, 잠금 대기 시간 초과
+                    sleep(0.2 * (attempt + 1))
+                    continue
+                raise
+        # 택배사는 5xx 응답이면 나중에 다시 보냅니다.
+        return Response({'result': 'ERROR', 'message': '잠시 후 다시 보내 주세요.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def apply(self, event):
         waybill_no = str(event.get('waybill_no') or '')
         record = None
         if waybill_no:
