@@ -489,7 +489,12 @@ class ItemViewSet(viewsets.ModelViewSet):
                         if error:
                             return error_response(error)
                         applied.append(f'[{serial.serial_number}] 분실 처리')
-        return Response({'location': location.full_code, 'rows': rows, 'unknown': unknown, 'warnings': warnings, 'applied': applied})
+        # 반영했거나 전부 일치하면 이 위치의 조사를 마친 것으로 기록합니다. (순환 조사 목록에서 빠짐)
+        matched = not unknown and all(row['counted'] == row['system'] and not row['missing'] and not row['unexpected'] for row in rows)
+        if apply or (matched and codes):
+            WarehouseLocation.objects.filter(pk=location.pk).update(last_counted_at=timezone.now())
+        return Response({'location': location.full_code, 'rows': rows, 'unknown': unknown, 'warnings': warnings, 'applied': applied,
+                         'counted': bool(apply or (matched and codes))})
 
     @action(detail=True, methods=['post'])
     def transfer_location(self, request, pk=None):
@@ -1525,6 +1530,10 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
     serializer_class = WarehouseLocationSerializer
     permission_classes = [IsAdminRole]
 
+    @action(detail=False, methods=['get'])
+    def cycle_count(self, request):
+        return Response(cycle_count_plan())
+
     def perform_destroy(self, instance):
         # 지우면 상품의 위치가 조용히 비워지므로, 보관 중인 상품이 있으면 막습니다.
         count = instance.items.filter(is_active=True).count()
@@ -1537,6 +1546,44 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
 
 
 STALLED_HOURS = 24  # 출고 후 이 시간이 지나도 배송완료가 아니면 확인이 필요합니다.
+
+
+def cycle_count_plan():
+    """순환 재고 조사: 오늘 조사할 위치. 재고가 있는 위치 가운데 오래 조사하지 않은 곳,
+    최근 30일 동안 입출고가 많은 상품이 있는 곳을 먼저 고릅니다. 오늘 이미 조사한 곳은 done에 들어갑니다."""
+    now = timezone.now()
+    today_start = day_start(timezone.localdate())
+    since = now - timedelta(days=30)
+    movement = dict(InventoryLog.objects.filter(timestamp__gte=since).exclude(work='').values('item_id').annotate(n=Count('id')).values_list('item_id', 'n'))
+    stocked = {}
+    for row in ItemStock.objects.filter(quantity__gt=0, location__is_active=True, item__is_active=True).values('location_id', 'item_id'):
+        stocked.setdefault(row['location_id'], set()).add(row['item_id'])
+    locations = WarehouseLocation.objects.filter(pk__in=stocked)
+    busy = sorted(sum(movement.get(i, 0) for i in items) for items in stocked.values())
+    busy_line = busy[len(busy) // 2] if busy else 0  # 중간값보다 많이 움직이면 "자주 움직임"
+
+    done, candidates = [], []
+    for loc in locations:
+        moves = sum(movement.get(i, 0) for i in stocked[loc.id])
+        days = (now - loc.last_counted_at).days if loc.last_counted_at else None
+        row = {'id': loc.id, 'full_code': loc.full_code, 'barcode': loc.barcode, 'items': len(stocked[loc.id]), 'moves_30d': moves,
+               'busy': moves > busy_line, 'days_since': days,
+               'last_counted_at': timezone.localtime(loc.last_counted_at).isoformat() if loc.last_counted_at else None}
+        if loc.last_counted_at and loc.last_counted_at >= today_start:
+            done.append(row)
+            continue
+        # 한 번도 안 했거나 목표 주기를 넘긴 곳이 먼저, 자주 움직이는 곳은 두 배 빨리 돌아옵니다.
+        age = days if days is not None else 10 ** 6
+        row['overdue'] = days is None or days >= settings.CYCLE_COUNT_DAYS
+        row['score'] = age * (2 if row['busy'] else 1)
+        candidates.append(row)
+    candidates.sort(key=lambda r: (-r['score'], r['full_code']))
+    todo = candidates[:max(0, settings.CYCLE_COUNT_DAILY - len(done))]
+    return {
+        'daily': settings.CYCLE_COUNT_DAILY, 'cycle_days': settings.CYCLE_COUNT_DAYS,
+        'todo': todo, 'done': sorted(done, key=lambda r: r['full_code']),
+        'overdue': sum(1 for r in candidates if r['overdue']), 'stocked_locations': len(stocked),
+    }
 
 
 def replenishment_tasks():
@@ -1614,6 +1661,7 @@ class TodayAPIView(APIView):
 
     def get(self, request):
         low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).count()
+        plan = cycle_count_plan()
         return Response({
             'carrier_issues': carrier_issues(),
             'overdue_purchase_orders': overdue_purchase_orders(),
@@ -1623,6 +1671,7 @@ class TodayAPIView(APIView):
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
             'low_stock': low_stock,
             'replenish': len(replenishment_tasks()),
+            'cycle_count': {'todo': len(plan['todo']), 'done': len(plan['done'])},
             'setup': {
                 'locations': WarehouseLocation.objects.exists(),
                 'items': Item.objects.filter(is_active=True).exists(),

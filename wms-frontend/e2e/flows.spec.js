@@ -604,3 +604,31 @@ test('위치 보충: 기본 위치가 모자라면 현장에서 다른 선반 �
   await admin.locator('.modal').getByRole('button', { name: '저장' }).click()
   await toast(admin, '수정되었습니다')
 })
+
+test('순환 재고 조사: 반영한 위치는 오늘 완료로, 스캔이 모두 맞아도 완료로 기록', async () => {
+  await admin.goto('/audit')
+  // 앞의 스캔 재고 조사에서 반영한 A-R01-1단은 오늘 완료 목록에 있습니다.
+  const plan = await apiGet(admin, '/api/inventory/locations/cycle_count/')
+  expect(plan.done.map(loc => loc.full_code)).toContain('A-R01-1단')
+  const cycle = admin.locator('.panel', { hasText: '오늘의 순환 조사' }).last()
+  await expect(cycle).toContainText('✔ A-R01-1단')
+
+  // 전산상 그 위치에 있는 것을 그대로 스캔하면 "모두 일치"로 조사 완료가 기록됩니다.
+  const target = plan.done.find(loc => loc.full_code === 'A-R01-1단')
+  const token = await admin.evaluate(() => localStorage.getItem('access_token'))
+  const preview = await (await admin.request.post('/api/inventory/items/audit_scan/', {
+    headers: { Authorization: `Bearer ${token}` }, data: { location: target.id, codes: [] },
+  })).json()
+  const codes = preview.rows.flatMap(row => (row.serial_tracked ? row.missing : Array(row.system).fill(row.sku)))
+  await selectByText(admin.locator('.panel-body select').first(), 'A-R01-1단')
+  const box = admin.locator('input.field-scan')
+  for (const code of codes) {
+    await box.fill(code)
+    await box.press('Enter')
+  }
+  await admin.getByRole('button', { name: '대조하기' }).click()
+  await expect(admin.getByText('✔ 모두 일치합니다. A-R01-1단 조사 완료로 기록했습니다.')).toBeVisible()
+  await shot(admin, '32-cycle-count')
+  await admin.goto('/today')
+  await expect(admin.locator('.today-card', { hasText: '순환 재고 조사' })).toContainText('1곳 완료')
+})

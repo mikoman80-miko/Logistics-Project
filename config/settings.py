@@ -192,6 +192,9 @@ REORDER_LEAD_DAYS = int(os.environ.get('REORDER_LEAD_DAYS', '7'))
 # 출고 마감: 이 시각 전에 들어온 주문은 그날 출고합니다. 주말 출고를 하면 SHIP_ON_WEEKENDS=1
 SHIP_CUTOFF_TIME = os.environ.get('SHIP_CUTOFF_TIME', '15:00')
 SHIP_ON_WEEKENDS = os.environ.get('SHIP_ON_WEEKENDS', '0') == '1'
+# 순환 재고 조사: 하루에 조사할 위치 수와, 모든 위치를 한 번씩 조사하는 목표 주기(일)
+CYCLE_COUNT_DAILY = int(os.environ.get('CYCLE_COUNT_DAILY', '5'))
+CYCLE_COUNT_DAYS = int(os.environ.get('CYCLE_COUNT_DAYS', '30'))
 
 # 운영 환경에서 HTTPS를 쓸 때 DJANGO_HTTPS=True로 켭니다.
 if env_bool('DJANGO_HTTPS'):

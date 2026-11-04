@@ -18,6 +18,7 @@
     <div class="text-muted">스캔 {{ codes.length }}건<span v-if="codes.length">: 최근 {{ codes.slice(-6).reverse().join(', ') }}</span></div>
 
     <template v-if="result">
+      <div v-if="result.counted && !result.applied.length" class="alert alert-success m-0">✔ 모두 일치합니다. {{ result.location }} 조사 완료로 기록했습니다.</div>
       <div v-for="message in result.warnings" :key="message" class="alert alert-warning m-0">{{ message }}</div>
       <div v-if="result.unknown.length" class="alert alert-danger m-0">등록되지 않은 바코드: {{ result.unknown.join(', ') }}</div>
       <table class="data-table data-table-sm">
@@ -60,7 +61,7 @@ import { useDialogStore } from '../stores/dialogStore'
 import { apiErrorMessage } from '../utils/apiError'
 import { playBeep } from '../utils/beep'
 
-const emit = defineEmits(['applied'])
+const emit = defineEmits(['applied', 'counted'])
 const toast = useToastStore()
 const dialog = useDialogStore()
 const locations = ref([])
@@ -104,6 +105,7 @@ const check = async () => {
   isBusy.value = true
   try {
     result.value = await send(false)
+    if (result.value.counted) emit('counted')
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '대조 중 오류가 발생했습니다.'), 'error', 5000)
   } finally {
@@ -125,6 +127,13 @@ const apply = async () => {
     isBusy.value = false
   }
 }
+
+// 순환 조사 목록에서 위치를 고르면 여기로 넘어옵니다.
+const selectLocation = (id) => {
+  locationId.value = id
+  reset()
+}
+defineExpose({ selectLocation })
 
 onMounted(async () => {
   locations.value = (await axios.get('/api/inventory/locations/')).data

@@ -18,6 +18,7 @@ class WarehouseLocation(models.Model):
     cell = models.CharField(max_length=50, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     description = models.CharField(max_length=200, blank=True, null=True)
+    last_counted_at = models.DateTimeField(null=True, blank=True)  # 마지막으로 스캔 재고 조사를 마친 때 (순환 조사 순서에 씀)
 
     @property
     def full_code(self):

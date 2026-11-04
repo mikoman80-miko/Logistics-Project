@@ -22,7 +22,22 @@
 
       <div v-if="mode === 'scan'" class="panel-body">
         <div class="alert alert-info">※ 위치를 고르고 그 선반의 물건을 하나씩 스캔한 뒤 [대조하기]를 누릅니다. 시리얼 상품은 기기의 시리얼을, 수량 상품은 상품코드를 개수만큼 스캔합니다.</div>
-        <ScanAuditPanel @applied="fetchData" />
+        <div class="panel mb-2.5">
+          <div class="panel-header">
+            <span class="panel-title">오늘의 순환 조사 ({{ plan.done.length }} / {{ plan.done.length + plan.todo.length }}곳 완료)</span>
+            <span class="text-muted">하루 {{ plan.daily }}곳 · 모든 위치를 {{ plan.cycle_days }}일에 한 번 · 주기 넘긴 위치 {{ plan.overdue }}곳</span>
+          </div>
+          <div class="panel-body flex flex-wrap gap-1.5">
+            <span v-if="!plan.todo.length && !plan.done.length" class="text-muted">재고가 있는 위치가 없습니다.</span>
+            <button v-for="loc in plan.todo" :key="loc.id" class="btn" :title="`상품 ${loc.items}종 · 최근 30일 입출고 ${loc.moves_30d}건`" @click="scanPanel.selectLocation(loc.id)">
+              <b>{{ loc.full_code }}</b>
+              <span class="ml-1 text-caption" :class="loc.overdue ? 'text-danger' : 'text-muted'">{{ loc.days_since === null ? '조사 기록 없음' : `${loc.days_since}일 전` }}</span>
+              <span v-if="loc.busy" class="ml-1 text-caption text-warning">자주 움직임</span>
+            </button>
+            <span v-for="loc in plan.done" :key="loc.id" class="btn cursor-default text-success">✔ {{ loc.full_code }}</span>
+          </div>
+        </div>
+        <ScanAuditPanel ref="scanPanel" @applied="afterCount" @counted="loadPlan" />
       </div>
 
       <div v-else class="panel-body">
@@ -94,7 +109,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onActivated, onMounted } from 'vue'
+import axios from 'axios'
 import { useInventoryStore } from '../../stores/inventory'
 import { apiErrorMessage } from '../../utils/apiError'
 import { useToastStore } from '../../stores/toastStore'
@@ -106,6 +122,16 @@ const mode = ref('scan')
 const toast = useToastStore()
 const dialog = useDialogStore()
 const auditList = ref([])
+const scanPanel = ref(null)
+const plan = ref({ daily: 0, cycle_days: 0, todo: [], done: [], overdue: 0 })
+
+const loadPlan = async () => {
+  plan.value = (await axios.get('/api/inventory/locations/cycle_count/')).data
+}
+const afterCount = () => {
+  fetchData()
+  loadPlan()
+}
 
 const fetchData = async () => {
   await store.fetchItems()
@@ -158,5 +184,6 @@ const applyAudit = async () => {
 }
 
 onMounted(() => { fetchData() })
+onActivated(loadPlan)  // 다른 탭에서 조사하고 돌아와도 최신 목록
 </script>
 <!-- CSS 삭제됨 -->

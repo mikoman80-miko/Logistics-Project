@@ -11,7 +11,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+    <div class="grid grid-cols-3 lg:grid-cols-5 gap-2.5">
       <button v-for="card in cards" :key="card.title" class="today-card" @click="router.push(card.path)">
         <span class="text-heading font-bold">{{ card.title }}</span>
         <span class="text-[40px] font-bold leading-none my-2" :class="card.count() > 0 ? (card.alert?.() ? 'text-danger' : card.color) : 'text-muted'">{{ card.count() }}</span>
@@ -92,7 +92,7 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const today = ref({ orders: 0, orders_due: { overdue: 0, today: 0, later: 0, urgent: 0, cutoff: '' }, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
+const today = ref({ cycle_count: { todo: 0, done: 0 }, orders: 0, orders_due: { overdue: 0, today: 0, later: 0, urgent: 0, cutoff: '' }, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
 
 const cards = [
   { title: '출고 대기', count: () => today.value.orders, path: '/orders', color: 'text-primary', alert: () => today.value.orders_due.overdue > 0,
@@ -103,6 +103,7 @@ const cards = [
     } },
   { title: '입고 예정', count: () => today.value.purchase_orders, hint: '아직 다 받지 못한 발주', path: '/purchase-order', color: 'text-primary' },
   { title: '반품 회수 대기', count: () => today.value.returns, hint: '돌아올 기기', path: '/returns', color: 'text-warning' },
+  { title: '순환 재고 조사', count: () => today.value.cycle_count.todo, hint: () => `오늘 조사할 위치 · ${today.value.cycle_count.done}곳 완료`, path: '/audit', color: 'text-warning' },
   { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품 · 누르면 발주 제안', path: '/purchase-order?suggest=1', color: 'text-danger' },
 ]
 

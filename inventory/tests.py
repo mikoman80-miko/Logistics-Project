@@ -1436,3 +1436,38 @@ class ReplenishmentTests(BaseCase):
         res = self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'from': self.reserve.id, 'serials': ['R0', 'R1']}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(ItemSerial.objects.filter(location=self.face).count(), 2)
+
+
+@override_settings(CYCLE_COUNT_DAILY=2, CYCLE_COUNT_DAYS=30)
+class CycleCountTests(BaseCase):
+    URL = '/api/inventory/locations/cycle_count/'
+
+    def setUp(self):
+        super().setUp()
+        self.locs = [WarehouseLocation.objects.create(zone='C', rack=f'R{n}', tier=1) for n in range(3)]
+        for loc in self.locs:
+            ItemStock.objects.create(item=self.item, location=loc, quantity=1)
+        Item.objects.filter(pk=self.item.pk).update(quantity=3)
+        WarehouseLocation.objects.create(zone='C', rack='EMPTY', tier=1)  # 재고 없는 위치는 빼고
+        self.client.force_authenticate(self.admin)
+
+    def test_oldest_first_and_done_after_matching_scan(self):
+        WarehouseLocation.objects.filter(pk=self.locs[0].pk).update(last_counted_at=timezone.now() - timedelta(days=40))
+        WarehouseLocation.objects.filter(pk=self.locs[1].pk).update(last_counted_at=timezone.now() - timedelta(days=3))
+        plan = self.client.get(self.URL).data
+        self.assertEqual([r['id'] for r in plan['todo']], [self.locs[2].id, self.locs[0].id])  # 안 한 곳 → 40일 전
+        self.assertEqual((plan['overdue'], plan['stocked_locations']), (2, 3))
+
+        # 대조만 해도 모두 일치하면 조사 완료로 기록되고, 하루 할당량에서 빠집니다.
+        res = self.client.post(f'{ITEMS}audit_scan/', {'location': self.locs[2].id, 'codes': ['A-1']}, format='json')
+        self.assertTrue(res.data['counted'])
+        plan = self.client.get(self.URL).data
+        self.assertEqual(([r['id'] for r in plan['done']], [r['id'] for r in plan['todo']]), ([self.locs[2].id], [self.locs[0].id]))
+        self.assertEqual(self.client.get('/api/inventory/today/').data['cycle_count'], {'todo': 1, 'done': 1})
+
+    def test_mismatch_preview_is_not_counted(self):
+        res = self.client.post(f'{ITEMS}audit_scan/', {'location': self.locs[0].id, 'codes': ['A-1', 'A-1']}, format='json')
+        self.assertFalse(res.data['counted'])
+        self.assertIsNone(WarehouseLocation.objects.get(pk=self.locs[0].pk).last_counted_at)
+        res = self.client.post(f'{ITEMS}audit_scan/', {'location': self.locs[0].id, 'codes': ['A-1', 'A-1'], 'apply': True}, format='json')
+        self.assertTrue(res.data['counted'])
