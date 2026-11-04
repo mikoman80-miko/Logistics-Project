@@ -19,6 +19,8 @@ const backendEnv = {
   MOCK_CARRIER_DB: path.join(root, 'mock_carrier', 'carrier_e2e.sqlite3'),
   MOCK_CARRIER_STEP_SECONDS: '3600',  // 테스트 중에는 자동으로 진행하지 않습니다.
   PYTHONUTF8: '1',
+  WMS_LOG_NAME: 'e2e',  // 테스트 서버 로그는 logs/e2e.log
+  ALERT_WEBHOOK_URL: '',  // 테스트 중 일부러 낸 오류를 메신저로 보내지 않습니다.
 }
 
 export default defineConfig({

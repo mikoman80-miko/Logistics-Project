@@ -15,6 +15,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 # 운영 모드는 .env의 값과 관계없이 디버그를 끕니다. (오류 화면에 내부 정보가 보이지 않게)
 os.environ['DJANGO_DEBUG'] = '0'
+os.environ.setdefault('WMS_LOG_NAME', 'prod')  # 운영 로그는 logs/prod.log, logs/prod-error.log
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 

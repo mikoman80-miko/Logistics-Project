@@ -10,6 +10,8 @@ import requests
 from django.conf import settings
 from django.utils.dateparse import parse_datetime
 
+from . import monitor
+
 logger = logging.getLogger(__name__)
 
 CARRIER_NAME = '가온택배'
@@ -35,7 +37,10 @@ def _call(method, path, payload=None):
                                headers={'X-API-Key': settings.CARRIER_API_KEY})
     except requests.RequestException:
         logger.warning('택배사 연결 실패: %s %s', method, path)
+        monitor.carrier_result(False)
         raise CarrierError('택배사 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+    # 서버 쪽 장애(5xx)도 연결 장애로 셉니다. 주소 오류 같은 요청 거절(4xx)은 장애가 아닙니다.
+    monitor.carrier_result(res.status_code < 500)
     try:
         body = res.json()
     except ValueError:

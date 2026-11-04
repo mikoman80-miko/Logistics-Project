@@ -23,3 +23,6 @@ mock_carrier/carrier_e2e.sqlite3
 
 # 운영 모드 정적 파일 (collectstatic)
 staticfiles/
+
+# 서버 로그
+logs/

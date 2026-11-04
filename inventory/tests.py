@@ -1566,3 +1566,41 @@ class ListPagingTests(BaseCase):
         data = self.client.get(SERIALS, {'status': '출고완료', 'q': 'sn-', 'page': 1}).data
         self.assertEqual((data['count'], sorted(s['serial_number'] for s in data['results'])), (2, ['SN-1', 'SN-2']))
         self.assertEqual(len(self.client.get(SERIALS, {'q': 'A-1'}).data), 3)  # 상품코드로도 찾음
+
+
+@override_settings(ALERT_WEBHOOK_URL='https://example.test/hook', ALERT_REPEAT_MINUTES=10, CARRIER_FAIL_ALERT=3)
+class MonitorTests(APITestCase):
+    def setUp(self):
+        from . import monitor
+        self.monitor = monitor
+        monitor._last_sent.clear()
+        monitor._carrier_failures = 0
+
+    @patch('inventory.monitor.threading.Thread')
+    def test_same_error_alerts_once_per_window(self, thread):
+        import logging
+        handler = self.monitor.AlertLogHandler()
+        try:
+            raise ValueError('잘못된 값')
+        except ValueError:
+            import sys
+            record = logging.LogRecord('django.request', logging.ERROR, __file__, 1, 'Internal Server Error: /api/x/', None, sys.exc_info())
+        handler.emit(record)
+        handler.emit(record)
+        self.assertEqual(thread.call_count, 1)
+        self.assertEqual(thread.call_args.kwargs['target'].__closure__ is not None, True)
+
+    @patch('inventory.monitor.alert')
+    def test_carrier_down_and_recovered(self, alert):
+        for _ in range(4):
+            self.monitor.carrier_result(False)
+        self.assertEqual(alert.call_count, 1)  # 3번째 실패에서 한 번
+        self.assertIn('3번 연속 실패', alert.call_args.args[0])
+        self.monitor.carrier_result(True)
+        self.assertIn('복구', alert.call_args.args[0])
+        self.monitor.carrier_result(True)
+        self.assertEqual(alert.call_count, 2)
+
+    def test_health(self):
+        res = self.client.get('/api/health/')
+        self.assertEqual((res.status_code, res.data['status']), (200, 'ok'))

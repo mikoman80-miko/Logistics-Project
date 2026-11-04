@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -189,6 +190,40 @@ REST_FRAMEWORK = {
 }
 
 ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '')
+# 오류 감시: 같은 오류 알림은 이 시간(분)에 한 번만, 택배사 연결이 이 횟수만큼 연속 실패하면 알립니다.
+ALERT_REPEAT_MINUTES = int(os.environ.get('ALERT_REPEAT_MINUTES', '10'))
+CARRIER_FAIL_ALERT = int(os.environ.get('CARRIER_FAIL_ALERT', '3'))
+
+# 로그: logs/<이름>.log(전체, 30일 보관)와 logs/<이름>-error.log(오류만, 90일 보관)에 하루 단위로 남깁니다.
+# 개발 서버는 dev, 운영 서버(serve.py)는 prod 이름을 씁니다. 테스트 중에는 파일과 알림을 쓰지 않습니다.
+LOG_DIR = BASE_DIR / 'logs'
+LOG_NAME = os.environ.get('WMS_LOG_NAME', 'dev')
+TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
+_file_handler = {'class': 'logging.handlers.TimedRotatingFileHandler', 'when': 'midnight', 'encoding': 'utf-8', 'formatter': 'plain', 'delay': True}
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+        **({} if TESTING else {
+            'file': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}.log'), 'backupCount': 30, 'level': 'INFO'},
+            'errors': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}-error.log'), 'backupCount': 90, 'level': 'ERROR'},
+            'alert': {'class': 'inventory.monitor.AlertLogHandler', 'level': 'ERROR'},
+        }),
+    },
+    'root': {'handlers': ['console'] if TESTING else ['console', 'file', 'errors', 'alert'], 'level': 'INFO'},
+    'loggers': {
+        # runserver의 요청 한 줄 기록은 화면(pm2 로그)에만 남깁니다.
+        'django.server': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        # 잘못된 주소(Host)로 들어온 요청은 외부 탐색일 때가 많아 알리지 않고 로그 파일에만 남깁니다.
+        'django.security.DisallowedHost': {'handlers': ['console'] if TESTING else ['file'], 'level': 'ERROR', 'propagate': False},
+    },
+}
+if TESTING:
+    ALERT_WEBHOOK_URL = ''  # 테스트가 실제 메신저로 알리지 않게 (필요한 테스트는 따로 켭니다)
+else:
+    LOG_DIR.mkdir(exist_ok=True)
 
 # 택배사 API. 주소를 비워 두면 택배 연동 없이 동작합니다.
 CARRIER_API_URL = os.environ.get('CARRIER_API_URL', '').rstrip('/')

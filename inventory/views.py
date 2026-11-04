@@ -2006,6 +2006,23 @@ class CarrierWebhookView(APIView):
         return Response({'result': 'OK'})
 
 
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
+class HealthView(APIView):
+    """서버 상태 확인(로그인 없이): DB에 연결되는지 봅니다. 감시 도구나 브라우저로 /api/health/ 를 열어 확인합니다."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        from django.db import connection
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1')
+        except Exception:
+            logger.exception('상태 확인: DB 연결 실패')
+            return Response({'status': 'error', 'database': 'down'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'status': 'ok', 'database': 'ok', 'time': timezone.localtime().isoformat()})
+
+
 class PasswordChangeView(APIView):
     # 로그인한 사람이 자기 비밀번호를 바꿉니다. 현재 비밀번호 추측을 막기 위해 로그인과 같은 횟수 제한을 둡니다.
     permission_classes = [IsAuthenticated]
