@@ -25,6 +25,7 @@
           <div class="text-4xl font-mono">{{ activeLine.item_sku }}</div>
           <div class="text-[80px] font-bold leading-tight">
             <span class="text-primary">{{ activeLine.received_quantity }}</span> / {{ activeLine.order_quantity }}개
+            <span v-if="activeLine.closed_quantity" class="text-3xl text-warning align-middle">(검수 차이로 {{ activeLine.closed_quantity }}개 마감)</span>
           </div>
           <div class="text-[44px] font-bold text-warning">📍 {{ putaway[activeLine.id]?.full_code || activeLine.location_name || '위치 미지정' }}에 보관
             <span v-if="putaway[activeLine.id]" class="text-primary text-3xl">(기본 위치 대신)</span>
@@ -37,8 +38,11 @@
           <span v-if="pendingPlace" class="text-4xl text-primary mt-4">📍 다음 상품은 {{ pendingPlace.full_code }}에 넣습니다</span>
         </div>
         <div class="text-4xl font-bold text-center">{{ prompt }}</div>
-        <ScanBox :paused="!!qtyLine || !!cancelLine" @scan="onScan" />
-        <button v-if="activeLine && !activeLine.serial_tracked && !isDone(activeLine)" class="work-btn" @click="qtyLine = activeLine">수량 직접 입력</button>
+        <ScanBox :paused="!!qtyLine || !!cancelLine || !!issueLine" @scan="onScan" />
+        <div v-if="activeLine" class="grid grid-cols-2 gap-4">
+          <button v-if="!activeLine.serial_tracked && !isDone(activeLine)" class="work-btn" @click="qtyLine = activeLine">수량 직접 입력</button>
+          <button class="work-btn" :class="{ 'col-span-2': activeLine.serial_tracked || isDone(activeLine) }" @click="issueLine = activeLine">검수 차이 (덜 옴 · 파손 · 더 옴)</button>
+        </div>
       </section>
 
       <aside class="flex flex-col gap-3 min-h-0 overflow-y-auto">
@@ -46,7 +50,7 @@
         <div v-for="line in po.items" :key="line.id" class="work-line" :class="{ 'is-done': isDone(line), 'is-current': line.item_sku === contextSku }">
           <div class="flex justify-between gap-3 font-bold">
             <span class="truncate">{{ isDone(line) ? '✔ ' : '' }}{{ line.item_name }}</span>
-            <span class="shrink-0">{{ line.received_quantity }}/{{ line.order_quantity }}</span>
+            <span class="shrink-0">{{ line.received_quantity }}/{{ line.order_quantity }}<span v-if="line.closed_quantity" class="text-warning"> (차이 {{ line.closed_quantity }})</span></span>
           </div>
           <div class="flex justify-between items-center mt-1 text-xl text-muted">
             <span>{{ line.serial_tracked ? '시리얼 스캔' : '수량 입고' }}</span>
@@ -57,7 +61,7 @@
       </aside>
     </div>
 
-    <QuantityDialog v-if="qtyLine" :name="qtyLine.item_name" :remaining="qtyLine.order_quantity - qtyLine.received_quantity"
+    <QuantityDialog v-if="qtyLine" :name="qtyLine.item_name" :remaining="qtyLine.remaining"
       @confirm="enterQuantity" @close="qtyLine = null" />
 
     <!-- 입고 취소: 시리얼 관리 품목은 취소할 시리얼을 스캔하고, 그 외는 수량을 입력합니다. -->
@@ -65,6 +69,7 @@
       @confirm="cancelSerial" @close="cancelLine = null" />
     <QuantityDialog v-else-if="cancelLine" :name="`${cancelLine.item_name} 입고 취소`" label="입고된 수량"
       :remaining="cancelLine.received_quantity" @confirm="cancelQuantity" @close="cancelLine = null" />
+    <ReceiptIssueDialog v-if="issueLine" :line="issueLine" @confirm="reportIssue" @close="issueLine = null" />
   </WorkLayout>
 </template>
 
@@ -75,6 +80,7 @@ import WorkLayout from '../../components/work/WorkLayout.vue'
 import ScanBox from '../../components/work/ScanBox.vue'
 import QuantityDialog from '../../components/work/QuantityDialog.vue'
 import SerialDialog from '../../components/work/SerialDialog.vue'
+import ReceiptIssueDialog from '../../components/work/ReceiptIssueDialog.vue'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
 import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { apiErrorMessage } from '../../utils/apiError'
@@ -86,9 +92,10 @@ const po = ref(null)
 const contextSku = ref('')
 const qtyLine = ref(null)
 const cancelLine = ref(null)
+const issueLine = ref(null)
 const doneRef = ref(null)
 
-const isDone = (line) => line.received_quantity >= line.order_quantity
+const isDone = (line) => line.remaining <= 0  // 받은 수량 + 검수 차이로 마감한 수량
 const isComplete = computed(() => po.value?.status === '입고완료')
 const activeLine = computed(() => po.value?.items.find(line => line.item_sku === contextSku.value))
 const prompt = computed(() => {
@@ -151,6 +158,19 @@ const cancelReceipt = async (body) => {
     fail(apiErrorMessage(err, '입고 취소 중 오류가 발생했습니다.'))
   }
 }
+// 검수 차이 기록 (덜 옴·파손은 그만큼 이 줄을 마감)
+const reportIssue = async (body) => {
+  const line = issueLine.value
+  issueLine.value = null
+  try {
+    const res = await axios.post(`/api/inventory/purchase-orders/${po.value.id}/report_issue/`, { sku: line.item_sku, ...body })
+    po.value = res.data.po
+    ok(res.data.message)
+  } catch (err) {
+    fail(apiErrorMessage(err, '검수 차이를 기록하지 못했습니다.'))
+  }
+}
+
 const cancelSerial = (code) => cancelReceipt({ sku: cancelLine.value.item_sku, serial_number: code })
 const cancelQuantity = (quantity) => cancelReceipt({ sku: cancelLine.value.item_sku, quantity })
 

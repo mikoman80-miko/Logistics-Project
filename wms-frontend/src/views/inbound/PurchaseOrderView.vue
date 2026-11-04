@@ -107,20 +107,31 @@
                 <th width="80">시리얼</th>
                 <th width="90">발주 수량</th>
                 <th width="90">입고 수량</th>
+                <th width="90">검수 차이</th>
                 <th width="90">관리</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in selected.items" :key="item.id" :class="{ 'row-success': item.received_quantity >= item.order_quantity }">
+              <template v-for="item in selected.items" :key="item.id">
+              <tr :class="{ 'row-success': item.remaining <= 0 }">
                 <td class="text-center font-mono">{{ item.item_sku }}</td>
                 <td class="truncate">{{ item.item_name }}</td>
                 <td class="text-center">{{ item.serial_tracked ? '관리' : '-' }}</td>
                 <td class="text-right font-bold">{{ item.order_quantity }}</td>
                 <td class="text-right font-bold text-primary">{{ item.received_quantity }}</td>
+                <td class="text-right" :class="item.issues.length ? 'font-bold text-warning' : 'text-muted'">{{ item.issues.length ? `${item.issues.length}건` : '-' }}</td>
                 <td class="text-center">
                   <button v-if="item.received_quantity > 0" class="btn btn-sm btn-danger" @click="openCancel(item)">입고 취소</button>
                 </td>
               </tr>
+              <tr v-for="issue in item.issues" :key="`issue-${issue.id}`" class="row-warning">
+                <td colspan="5" class="text-caption">
+                  └ <b>{{ issue.kind }} {{ issue.quantity }}개</b>{{ issue.note ? ` · ${issue.note}` : '' }}
+                  <span class="text-muted"> · {{ issue.user }} · {{ issue.created_at.slice(0, 16).replace('T', ' ') }}</span>
+                </td>
+                <td colspan="2" class="text-center"><button class="btn btn-sm" :disabled="selected.status === '취소됨'" @click="cancelIssue(issue)">기록 지우기</button></td>
+              </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -215,6 +226,18 @@ const submitPO = async () => {
 }
 
 const cancelForm = ref(null)
+const cancelIssue = async (issue) => {
+  const message = issue.kind === '초과' ? '이 기록을 지웁니다.' : `기록을 지우면 ${issue.quantity}개를 다시 받을 수 있게 됩니다.`
+  if (!(await dialog.confirm(`[${issue.kind} ${issue.quantity}개] ${message}`, { title: '검수 차이 기록 지우기', okText: '지우기' }))) return
+  try {
+    const res = await axios.post(`/api/inventory/purchase-orders/${selected.value.id}/cancel_issue/`, { issue: issue.id })
+    toast.addToast(res.data.message, 'success')
+    await fetchPOs()
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '기록을 지우지 못했습니다.'), 'error', 5000)
+  }
+}
+
 const openCancel = (line) => {
   cancelForm.value = { line, serial_number: '', quantity: 1 }
 }

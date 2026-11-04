@@ -51,6 +51,7 @@ const router = createRouter({
     { path: '/ledger', name: 'ledger', component: () => import('../views/inventory/StockLedgerView.vue'), meta: adminPage('입출고 장부') },
     { path: '/dashboard', name: 'dashboard', component: DashboardView, meta: adminPage('입출고 통계') },
     { path: '/daily-close', name: 'daily-close', component: () => import('../views/inventory/DailyCloseView.vue'), meta: adminPage('일일 마감') },
+    { path: '/receipt-issues', name: 'receipt-issues', component: () => import('../views/inbound/ReceiptIssueReportView.vue'), meta: adminPage('입고 검수 차이') },
     { path: '/workers', name: 'workers', component: () => import('../views/inventory/WorkerReportView.vue'), meta: adminPage('작업자 실적') },
     { path: '/items', name: 'items', component: ItemMasterView, meta: adminPage('상품') },
     { path: '/locations', name: 'locations', component: LocationMasterView, meta: adminPage('보관 위치') },

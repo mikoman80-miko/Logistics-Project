@@ -5,6 +5,7 @@ from .views import (
     WorkerReportAPIView,
     MasterChangeViewSet,
     DailyCloseAPIView,
+    ReceiptIssueReportAPIView,
     InventoryLogViewSet, 
     ItemSerialViewSet, 
     WarehouseLocationViewSet, 
@@ -39,4 +40,5 @@ urlpatterns = [
     path('today/', TodayAPIView.as_view(), name='today-summary'),
     path('reports/workers/', WorkerReportAPIView.as_view(), name='worker-report'),
     path('reports/daily/', DailyCloseAPIView.as_view(), name='daily-close'),
+    path('reports/receipt-issues/', ReceiptIssueReportAPIView.as_view(), name='receipt-issues'),
 ]

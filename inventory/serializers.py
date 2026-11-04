@@ -143,11 +143,17 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     location_barcode = serializers.ReadOnlyField(source='item.location.barcode')
     order_quantity = serializers.IntegerField(min_value=1)
     received_serials = serializers.SerializerMethodField()
+    remaining = serializers.IntegerField(read_only=True)
+    issues = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrderItem
         exclude = ['po']
-        read_only_fields = ['received_quantity']
+        read_only_fields = ['received_quantity', 'closed_quantity']
+
+    def get_issues(self, obj):
+        return [{'id': i.id, 'kind': i.kind, 'quantity': i.quantity, 'note': i.note, 'user': user_display(i.user) if i.user else '',
+                 'created_at': timezone.localtime(i.created_at).isoformat()} for i in obj.issues.all()]
 
     def get_received_serials(self, obj):
         # 이 발주로 입고되어 아직 창고에 있는 시리얼 (입고 취소 대상)

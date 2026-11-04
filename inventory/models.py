@@ -123,6 +123,11 @@ class PurchaseOrderItem(models.Model):
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
     order_quantity = models.IntegerField(default=0)
     received_quantity = models.IntegerField(default=0)
+    closed_quantity = models.IntegerField(default=0)  # 검수 차이(부족·파손)로 더 받지 않기로 한 수량
+
+    @property
+    def remaining(self):
+        return self.order_quantity - self.received_quantity - self.closed_quantity
 
     class Meta:
         constraints = [
@@ -318,3 +323,17 @@ class MasterChange(models.Model):
     class Meta:
         ordering = ['-timestamp', '-id']
         indexes = [models.Index(fields=['target', 'object_id'], name='change_target_idx')]
+
+
+class ReceiptIssue(models.Model):
+    # 입고 검수 차이: 발주보다 덜 옴(부족), 망가져 옴(파손), 더 옴(초과). 부족·파손은 그 수량만큼 발주 줄을 마감합니다.
+    KIND_CHOICES = [('부족', '부족'), ('파손', '파손'), ('초과', '초과')]
+    po_item = models.ForeignKey(PurchaseOrderItem, on_delete=models.CASCADE, related_name='issues')
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    quantity = models.PositiveIntegerField()
+    note = models.CharField(max_length=200, blank=True, default='')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']

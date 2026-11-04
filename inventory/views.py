@@ -33,7 +33,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import audit, carrier, due, stock
 from .audit import AuditMixin
 from .carrier import CarrierError
-from .models import DailyClose, MasterChange, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import DailyClose, MasterChange, ReceiptIssue, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -259,7 +259,7 @@ def alert_if_low_stock(item):
     if item.quantity > item.safety_stock or item.low_stock_alerted:
         return
     incoming = (PurchaseOrderItem.objects.filter(item=item, po__status__in=['발주대기', '입고중'])
-                .aggregate(n=Coalesce(Sum(F('order_quantity') - F('received_quantity')), 0))['n'])
+                .aggregate(n=Coalesce(Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity')), 0))['n'])
     plan = f'입고 예정 {incoming}개' if incoming > 0 else '진행 중인 발주 없음 → 발주 관리의 [발주 제안]에서 발주하세요'
     send_webhook_alert(f"[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}")
     Item.objects.filter(pk=item.pk).update(low_stock_alerted=True)
@@ -781,7 +781,7 @@ class SupplierViewSet(AuditMixin, viewsets.ModelViewSet):
 
 # 🌟 NEW: 발주서(PO) API 및 검수 입고 로직
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
-    queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item__location', 'items__received_serials').order_by('-order_date', '-id')
+    queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item__location', 'items__received_serials', 'items__issues__user').order_by('-order_date', '-id')
     serializer_class = PurchaseOrderSerializer
     permission_classes = [IsAdminRole]
     pagination_class = PageOnRequest
@@ -802,7 +802,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             usage=Coalesce(Sum('logs__quantity_changed', filter=Q(logs__action='OUT', logs__timestamp__gte=since)), 0),
         )
         incoming = dict(PurchaseOrderItem.objects.filter(po__status__in=['발주대기', '입고중'])
-                        .values('item').annotate(total=Sum(F('order_quantity') - F('received_quantity'))).values_list('item', 'total'))
+                        .values('item').annotate(total=Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity'))).values_list('item', 'total'))
         last_supplier = {}
         for line in (PurchaseOrderItem.objects.filter(po__supplier__is_active=True).exclude(po__status='취소됨')
                      .select_related('po__supplier').order_by('item_id', '-po__order_date', '-po_id')):
@@ -863,9 +863,9 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         elif serial_number:
             return error_response('시리얼을 관리하지 않는 상품입니다. 상품코드만 스캔해주세요.')
 
-        remaining = po_item.order_quantity - po_item.received_quantity
+        remaining = po_item.remaining
         if receive_qty > remaining:
-            return error_response(f'발주 수량을 초과합니다. (남은 수량 {remaining}개)')
+            return error_response(f'발주 수량을 초과합니다. (남은 수량 {remaining}개) 더 온 물건은 [검수 차이]에서 "초과"로 기록하세요.')
         # 현장에서 위치 라벨을 스캔해 다른 위치에 넣을 수 있습니다. 정하지 않으면 상품의 기본 위치입니다.
         target = None
         if request.data.get('location'):
@@ -887,10 +887,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '') + (f" → {target.full_code}" if target else '')
         InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user, work='입고', reference=po.po_number)
 
-        # 모든 품목 입고 완료 체크
-        all_received = all(i.received_quantity >= i.order_quantity for i in po.items.all())
-        po.status = '입고완료' if all_received else '입고중'
-        po.save(update_fields=['status'])
+        refresh_po_status(po)
 
         fresh = self.get_queryset().get(pk=po.pk)
         return Response({'message': f'발주 품목 [{sku}] 정상 입고 처리 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
@@ -947,11 +944,68 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user, work='입고취소', reference=po.po_number)
         alert_if_low_stock(item)
 
-        po.status = '입고중' if any(line.received_quantity > 0 for line in po.items.all()) else '발주대기'
-        po.save(update_fields=['status'])
+        refresh_po_status(po)
 
         fresh = self.get_queryset().get(pk=po.pk)
         return Response({'message': f'[{item.name}] {cancel_qty}개 입고 취소 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def report_issue(self, request, pk=None):
+        """입고 검수 차이 기록. kind: 부족(덜 옴)·파손(망가져 옴)은 남은 수량에서 빼고 그 줄을 마감하며, 초과(더 옴)는 기록만 합니다."""
+        po = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if po.status in ('입고완료', '취소됨') and request.data.get('kind') != '초과':
+            return error_response(f'{po.status} 상태의 발주서입니다.')
+        po_item = po.items.select_for_update().filter(item__sku=clean_code(request.data.get('sku'))).select_related('item').first()
+        if not po_item:
+            return error_response('이 발주서에 없는 상품입니다.')
+        kind = request.data.get('kind')
+        quantity = to_int(request.data.get('quantity'))
+        note = clean_code(request.data.get('note'))[:200]
+        if kind not in ('부족', '파손', '초과'):
+            return error_response('차이 종류를 고르세요. (부족, 파손, 초과)')
+        if not quantity or quantity < 1:
+            return error_response('수량을 입력하세요.')
+        if kind != '초과' and quantity > po_item.remaining:
+            return error_response(f'남은 수량({po_item.remaining}개)보다 많습니다.')
+        if kind == '파손' and not note:
+            return error_response('파손 내용을 적어 주세요. (예: 상자 찌그러짐, 액정 깨짐)')
+        ReceiptIssue.objects.create(po_item=po_item, kind=kind, quantity=quantity, note=note, user=request.user)
+        if kind != '초과':
+            po_item.closed_quantity += quantity
+            po_item.save(update_fields=['closed_quantity'])
+            refresh_po_status(po)
+        fresh = self.get_queryset().get(pk=po.pk)
+        return Response({'message': f'[{po_item.item.name}] {kind} {quantity}개 기록' + ('' if kind == '초과' else ' (그만큼 더 받지 않음)'),
+                         'status': fresh.status, 'po': self.get_serializer(fresh).data})
+
+    @action(detail=True, methods=['post'])
+    def cancel_issue(self, request, pk=None):
+        # 잘못 기록한 검수 차이를 지웁니다. (관리자) 부족·파손이면 그 수량을 다시 받을 수 있게 됩니다.
+        po = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        issue = ReceiptIssue.objects.select_related('po_item__item').filter(pk=to_int(request.data.get('issue')), po_item__po=po).first()
+        if not issue:
+            return error_response('검수 차이 기록을 찾을 수 없습니다.')
+        if po.status == '취소됨':
+            return error_response('취소된 발주서입니다.')
+        if issue.kind != '초과':
+            PurchaseOrderItem.objects.filter(pk=issue.po_item_id).update(closed_quantity=F('closed_quantity') - issue.quantity)
+        issue.delete()
+        refresh_po_status(po)
+        fresh = self.get_queryset().get(pk=po.pk)
+        return Response({'message': f'[{issue.po_item.item.name}] {issue.kind} {issue.quantity}개 기록을 지웠습니다.', 'po': self.get_serializer(fresh).data})
+
+
+def refresh_po_status(po):
+    """발주서 상태: 모든 줄을 받았거나 검수 차이로 마감했으면 입고완료, 하나라도 처리했으면 입고중"""
+    lines = list(po.items.all())
+    if all(line.remaining <= 0 for line in lines):
+        po.status = '입고완료'
+    elif any(line.received_quantity > 0 or line.closed_quantity > 0 for line in lines):
+        po.status = '입고중'
+    else:
+        po.status = '발주대기'
+    po.save(update_fields=['status'])
+
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
     queryset = SalesOrder.objects.select_related('bundle_parent').prefetch_related(
@@ -1859,6 +1913,37 @@ class WorkerReportAPIView(APIView):
             return error_response(f'기간은 최대 {REPORT_MAX_DAYS}일까지 조회할 수 있습니다.')
         workers, daily = worker_stats(start, end)
         return Response({'start_date': start.isoformat(), 'end_date': end.isoformat(), 'works': WORKS, 'workers': workers, 'daily': daily})
+
+
+class ReceiptIssueReportAPIView(APIView):
+    """입고 검수 차이 리포트: 기간(기본 최근 90일) 동안 거래처별 부족·파손·초과와 발주 대비 비율"""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        end = parse_date_param(request.query_params.get('end_date')) or timezone.localdate()
+        start = parse_date_param(request.query_params.get('start_date')) or end - timedelta(days=89)
+        if start > end:
+            return error_response('시작일이 종료일보다 늦습니다.')
+        issues = (ReceiptIssue.objects.filter(created_at__gte=day_start(start), created_at__lt=day_start(end + timedelta(days=1)))
+                  .select_related('po_item__po__supplier', 'po_item__item', 'user').order_by('-created_at'))
+        ordered = dict(PurchaseOrderItem.objects.filter(po__order_date__gte=start, po__order_date__lte=end).exclude(po__status='취소됨')
+                       .values('po__supplier__name').annotate(n=Sum('order_quantity')).values_list('po__supplier__name', 'n'))
+        suppliers = {}
+        for issue in issues:
+            name = issue.po_item.po.supplier.name if issue.po_item.po.supplier else '(거래처 미지정)'
+            row = suppliers.setdefault(name, {'supplier': name, 'ordered': ordered.get(name if name != '(거래처 미지정)' else None, 0),
+                                              '부족': 0, '파손': 0, '초과': 0, 'count': 0})
+            row[issue.kind] += issue.quantity
+            row['count'] += 1
+        for row in suppliers.values():
+            row['rate'] = round((row['부족'] + row['파손']) / row['ordered'] * 100, 1) if row['ordered'] else None
+        return Response({
+            'start_date': start.isoformat(), 'end_date': end.isoformat(),
+            'suppliers': sorted(suppliers.values(), key=lambda r: (-(r['부족'] + r['파손'] + r['초과']), r['supplier'])),
+            'issues': [{'id': i.id, 'created_at': timezone.localtime(i.created_at).isoformat(), 'po_id': i.po_item.po_id, 'po_number': i.po_item.po.po_number,
+                        'supplier': i.po_item.po.supplier.name if i.po_item.po.supplier else '', 'sku': i.po_item.item.sku, 'name': i.po_item.item.name,
+                        'kind': i.kind, 'quantity': i.quantity, 'note': i.note, 'user': user_display(i.user) if i.user else ''} for i in issues[:300]],
+        })
 
 
 def daily_summary(day):

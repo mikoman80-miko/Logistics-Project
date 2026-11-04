@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import DailyClose, InventoryLog, Item, MasterChange, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import DailyClose, InventoryLog, Item, MasterChange, ReceiptIssue, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -1604,3 +1604,60 @@ class MonitorTests(APITestCase):
     def test_health(self):
         res = self.client.get('/api/health/')
         self.assertEqual((res.status_code, res.data['status']), (200, 'ok'))
+
+
+class ReceiptIssueTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.po = PurchaseOrder.objects.create(po_number='PO-I1', status='발주대기')
+        self.line = PurchaseOrderItem.objects.create(po=self.po, item=self.item, order_quantity=10)
+        self.client.force_authenticate(self.worker)
+
+    def issue(self, kind, quantity, note=''):
+        return self.client.post(f'{POS}{self.po.id}/report_issue/', {'sku': 'A-1', 'kind': kind, 'quantity': quantity, 'note': note}, format='json')
+
+    def receive(self, quantity):
+        return self.client.post(f'{POS}{self.po.id}/receive_inbound/', {'sku': 'A-1', 'quantity': quantity}, format='json')
+
+    def test_short_and_damage_close_the_line(self):
+        self.assertEqual(self.receive(6).status_code, 200)
+        self.assertEqual(self.issue('파손', 1).status_code, 400)  # 파손은 내용 필수
+        self.assertEqual(self.issue('파손', 1, '상자 찢어짐').status_code, 200)
+        self.assertEqual(self.receive(4).status_code, 400)  # 남은 3개뿐
+        res = self.issue('부족', 3)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['status'], '입고완료')
+        line = res.data['po']['items'][0]
+        self.assertEqual((line['received_quantity'], line['closed_quantity'], line['remaining']), (6, 4, 0))
+        self.assertEqual([i['kind'] for i in line['issues']], ['파손', '부족'])
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 11)  # 받은 6개만 재고에
+
+    def test_over_is_record_only_and_admin_can_cancel(self):
+        self.receive(10)
+        res = self.issue('초과', 2, '2개 더 옴, 반송')
+        self.assertEqual((res.status_code, res.data['status']), (200, '입고완료'))
+        self.assertEqual(self.issue('부족', 1).status_code, 400)  # 입고완료 뒤에는 초과만
+        self.client.force_authenticate(self.admin)
+        PurchaseOrder.objects.filter(pk=self.po.pk).update(status='입고중')
+        PurchaseOrderItem.objects.filter(pk=self.line.pk).update(received_quantity=7)
+        self.client.force_authenticate(self.worker)
+        self.issue('부족', 3)
+        self.assertEqual(PurchaseOrder.objects.get(pk=self.po.pk).status, '입고완료')
+        short = ReceiptIssue.objects.get(kind='부족')
+        self.assertEqual(self.client.post(f'{POS}{self.po.id}/cancel_issue/', {'issue': short.id}, format='json').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(f'{POS}{self.po.id}/cancel_issue/', {'issue': short.id}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual((res.data['po']['status'], res.data['po']['items'][0]['remaining']), ('입고중', 3))
+
+    def test_report_by_supplier(self):
+        supplier = Supplier.objects.create(name='공급사A')
+        PurchaseOrder.objects.filter(pk=self.po.pk).update(supplier=supplier)
+        self.receive(5)
+        self.issue('파손', 1, '깨짐')
+        self.issue('부족', 4)
+        self.client.force_authenticate(self.admin)
+        data = self.client.get('/api/inventory/reports/receipt-issues/').data
+        self.assertEqual(data['suppliers'][0], {'supplier': '공급사A', 'ordered': 10, '부족': 4, '파손': 1, '초과': 0, 'count': 2, 'rate': 50.0})
+        self.assertEqual([i['kind'] for i in data['issues']], ['부족', '파손'])
