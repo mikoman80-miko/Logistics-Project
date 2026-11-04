@@ -1,9 +1,10 @@
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import include, path, re_path
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from inventory.serializers import RoleTokenObtainPairSerializer
+from config import spa
 from inventory.views import BadgeLoginView, CarrierWebhookView, PasswordChangeView
 
 
@@ -21,4 +22,6 @@ urlpatterns = [
     path('api/token/', LoginView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/token/badge/', BadgeLoginView.as_view(), name='token_badge'),
+    # 운영 모드: 그 밖의 주소는 화면(index.html)으로 보냅니다. (api/, admin/, static/ 은 제외)
+    re_path(r'^(?!api/|admin/|static/).*$', spa.index, name='spa'),
 ]

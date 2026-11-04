@@ -47,6 +47,26 @@ npm run down       # 멈추고 pm2 목록에서도 지움
 
 브라우저에서 http://localhost:5173 으로 접속합니다.
 
+## 운영 모드로 실행
+
+현장에서 여러 사람이 쓸 때는 개발 서버 대신 운영 모드로 실행합니다. 화면을 빌드해 Django와 함께 운영용 서버(waitress) 한 개로 제공하므로 빠르고 안정적입니다.
+
+```powershell
+npm run prod:start     # 화면 빌드 + 정적 파일 모으기 + DB 구조 반영 후 운영 서버(8080) 실행
+npm run prod:restart   # 코드를 바꾼 뒤 다시 빌드하고 재시작
+npm run prod:stop      # 멈춤
+npx pm2 logs wms       # 로그 보기
+```
+
+- 운영 서버를 띄운 PC에서는 http://localhost:8080, 현장 PC에서는 http://<운영 PC의 IP>:8080 으로 접속합니다. 시작할 때 로그에 접속 주소가 나옵니다.
+- 운영 모드는 `.env`의 `DJANGO_DEBUG`와 관계없이 디버그를 끄고, 이 PC의 이름과 IP를 접속 허용 목록에 자동으로 넣습니다. 다른 이름(도메인)으로 접속하면 `DJANGO_ALLOWED_HOSTS`에 추가합니다.
+- 다른 PC에서 접속하려면 운영 PC의 방화벽에서 8080 포트를 한 번 열어야 합니다. 관리자 PowerShell에서:
+  `New-NetFirewallRule -DisplayName "WMS 8080" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private`
+- 개발 서버(`npm run start`, 8000·5173)와 운영 서버(8080)는 포트가 달라 함께 띄워도 됩니다. 둘 다 같은 DB를 씁니다.
+- 가상 택배사를 쓸 때는 개발 서버 묶음의 carrier도 켜 둡니다: `npx pm2 start ecosystem.config.js --only carrier`
+- PC를 다시 켜면 `npm run prod:start`를 한 번 입력합니다.
+- 동시 처리 수는 `WMS_THREADS`(기본 8), 포트는 `WMS_PORT`(기본 8080) 환경 변수로 바꿉니다.
+
 ## 권한
 
 - **관리자:** `is_staff`가 켜진 계정입니다. 로그인하면 "오늘 할 일" 화면이 열리고, 주문·발주·반품 등록과 기본 설정, 보고서를 사용합니다.
@@ -123,7 +143,8 @@ myenv\Scripts\python backup_db.py    # db_backups 폴더에 저장
 
 ```powershell
 cd wms-frontend
-npm run e2e
+npm run e2e         # 개발 서버(Vite)로
+npm run e2e:prod    # 빌드한 화면을 운영 서버(serve.py)로
 ```
 
 ### 백업 복원
@@ -142,6 +163,7 @@ myenv\Scripts\python restore_check.py    # 복원 리허설: 가장 최근 백�
 
 ## 배포 전 확인
 
-- `.env`에서 `DJANGO_DEBUG=False`, `DJANGO_HTTPS=True`, `DJANGO_ALLOWED_HOSTS`를 실제 값으로 설정합니다.
+- 운영 모드(`npm run prod:start`)로 실행합니다. 디버그는 자동으로 꺼집니다.
+- HTTPS를 쓰는 경우에만 `.env`에 `DJANGO_HTTPS=True`를 넣습니다. (사내망 HTTP에서 켜면 접속이 막힙니다)
 - 기본 비밀번호를 쓰는 계정이 없는지 확인합니다.
 - `.env`와 `db_backups`는 저장소에 올리지 않습니다.

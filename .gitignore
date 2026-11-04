@@ -20,3 +20,6 @@ mock_carrier/carrier.sqlite3
 wms-frontend/e2e/results/
 wms-frontend/e2e/screens/
 mock_carrier/carrier_e2e.sqlite3
+
+# 운영 모드 정적 파일 (collectstatic)
+staticfiles/

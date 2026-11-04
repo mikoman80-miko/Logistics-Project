@@ -65,6 +65,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # 운영 모드에서 정적 파일과 빌드한 화면 파일을 내려줍니다.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -147,6 +149,13 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+# 운영 모드: collectstatic으로 관리자 화면 등의 정적 파일을 모아 두는 곳
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# 운영 모드: 빌드한 화면(npm run build 결과)을 Django가 함께 제공합니다. 개발 중에는 Vite(5173)를 씁니다.
+FRONTEND_DIST = BASE_DIR / 'wms-frontend' / 'dist'
+WHITENOISE_ROOT = FRONTEND_DIST if FRONTEND_DIST.exists() else None
+# 빌드한 파일 이름에는 내용 해시가 붙어 있어 오래 캐시해도 됩니다.
+WHITENOISE_IMMUTABLE_FILE_TEST = lambda path, url: url.startswith('/assets/')
 
 
 # Email
