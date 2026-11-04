@@ -2,7 +2,10 @@
   <WorkLayout title="출고">
     <!-- 주문 선택 -->
     <div v-if="!order" class="flex flex-col gap-4">
-      <div class="text-4xl font-bold">출고할 주문을 누르세요</div>
+      <div class="flex justify-between items-center">
+        <div class="text-4xl font-bold">출고할 주문을 누르세요</div>
+        <button v-if="orders.length > 1" class="work-btn work-btn-primary" @click="router.push('/work/picking')">여러 주문 한 번에 꺼내기 (집품)</button>
+      </div>
       <div v-if="orders.length === 0" class="work-empty">출고 대기 중인 주문이 없습니다.</div>
       <button v-for="row in orders" :key="row.id" class="work-row" @click="order = row">
         <span class="font-bold">{{ row.order_no }}</span>
@@ -73,6 +76,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 import WorkLayout from '../../components/work/WorkLayout.vue'
 import ScanBox from '../../components/work/ScanBox.vue'
@@ -86,6 +90,7 @@ import { apiErrorMessage } from '../../utils/apiError'
 const { ok, fail } = useWorkFeedback()
 const location = useLocationCheck()
 const dialog = useDialogStore()
+const router = useRouter()
 const orders = ref([])
 const order = ref(null)
 const contextSku = ref('')

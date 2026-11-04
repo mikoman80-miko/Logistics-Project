@@ -17,6 +17,7 @@ import WorkInboundView from '../views/work/WorkInboundView.vue'
 import WorkOutboundView from '../views/work/WorkOutboundView.vue'
 import WorkReturnView from '../views/work/WorkReturnView.vue'
 import WorkTodayView from '../views/work/WorkTodayView.vue'
+import WorkPickingView from '../views/work/WorkPickingView.vue'
 
 const isAdmin = () => localStorage.getItem('user_role') === '관리자'
 const homePath = () => (isAdmin() ? '/today' : '/work')
@@ -35,6 +36,7 @@ const router = createRouter({
     { path: '/work/outbound', name: 'work-outbound', component: WorkOutboundView, meta: workPage },
     { path: '/work/return', name: 'work-return', component: WorkReturnView, meta: workPage },
     { path: '/work/today', name: 'work-today', component: WorkTodayView, meta: workPage },
+    { path: '/work/picking', name: 'work-picking', component: WorkPickingView, meta: workPage },
 
     // 관리 화면
     { path: '/today', name: 'today', component: TodayView, meta: adminPage('오늘 할 일') },
