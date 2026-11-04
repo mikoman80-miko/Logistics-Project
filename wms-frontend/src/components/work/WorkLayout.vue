@@ -7,6 +7,7 @@
       </div>
       <div class="flex items-center gap-4 text-2xl">
         <span>{{ authStore.user?.name }}</span>
+        <button class="work-header-btn" @click="helpOpen = true">도움말 (F1)</button>
         <button v-if="isAdmin" class="work-header-btn" @click="router.push('/today')">관리 화면</button>
         <button class="work-header-btn" @click="switchOpen = true">작업자 전환</button>
         <button class="work-header-btn" @click="passwordOpen = true">비밀번호</button>
@@ -20,6 +21,7 @@
 
     <PasswordChangeModal v-if="passwordOpen" large @close="passwordOpen = false" />
     <BadgeSwitchDialog v-if="switchOpen" @close="switchOpen = false" />
+    <WorkHelpDialog v-if="helpOpen" @close="helpOpen = false" />
 
     <div v-if="feedback?.type === 'ok'" class="work-toast-ok">✔ {{ feedback.message }}</div>
     <div v-if="feedback?.type === 'error'" class="work-error" @click="dismiss">
@@ -37,6 +39,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
 import PasswordChangeModal from '../PasswordChangeModal.vue'
 import BadgeSwitchDialog from './BadgeSwitchDialog.vue'
+import WorkHelpDialog from './WorkHelpDialog.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -49,9 +52,15 @@ const { feedback, dismiss } = useWorkFeedback()
 const isAdmin = computed(() => authStore.user?.role === '관리자')
 const passwordOpen = ref(false)
 const switchOpen = ref(false)
+const helpOpen = ref(false)
 
 // 스캐너는 끝에 Enter를 보내므로, 오류 확인은 Enter가 아닌 스페이스바로 받습니다.
 const onKeydown = (event) => {
+  if (event.key === 'F1') {  // 브라우저 도움말 대신 이 화면의 도움말을 엽니다.
+    event.preventDefault()
+    helpOpen.value = true
+    return
+  }
   if (feedback.value?.type !== 'error') return
   event.preventDefault()
   if (event.code === 'Space') dismiss()
