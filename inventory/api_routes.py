@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     ItemViewSet, 
+    WorkerReportAPIView,
     InventoryLogViewSet, 
     ItemSerialViewSet, 
     WarehouseLocationViewSet, 
@@ -33,4 +34,5 @@ urlpatterns = [
     path('ledger/', InventoryLedgerAPIView.as_view(), name='inventory-ledger'),
     path('dashboard/', DashboardAPIView.as_view(), name='dashboard-stats'),
     path('today/', TodayAPIView.as_view(), name='today-summary'),
+    path('reports/workers/', WorkerReportAPIView.as_view(), name='worker-report'),
 ]

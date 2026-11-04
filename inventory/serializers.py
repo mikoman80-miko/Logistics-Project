@@ -296,7 +296,7 @@ class ItemSerialSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class InventoryLogSerializer(serializers.ModelSerializer):
-    ACTION_NAMES = {'IN': '입고', 'OUT': '출고', 'NEW': '신규등록', 'TRANSFER': '위치이동', 'DISABLE': '사용중지'}
+    ACTION_NAMES = {'IN': '입고', 'OUT': '출고', 'NEW': '신규등록', 'TRANSFER': '위치이동', 'DISABLE': '사용중지', 'RETURN': '반품회수'}
 
     item_sku = serializers.CharField(source='item.sku', read_only=True)
     item_name = serializers.CharField(source='item.name', read_only=True)

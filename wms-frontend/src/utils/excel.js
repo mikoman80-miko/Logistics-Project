@@ -3,17 +3,24 @@ import * as XLSX from 'xlsx'
 
 export const EXCEL_ACCEPT = '.xlsx,.xls,.csv'
 
-// rows는 headers 순서의 값 배열입니다. 문자열은 수식으로 해석되지 않고 글자 그대로 저장됩니다.
-export const downloadXlsx = (filename, sheetName, headers, rows) => {
+const makeSheet = (headers, rows) => {
   const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
   sheet['!cols'] = headers.map((header, i) => {
     const longest = Math.max(String(header).length, ...rows.slice(0, 200).map(row => String(row[i] ?? '').length))
     return { wch: Math.min(Math.max(longest + 2, 8), 50) }
   })
+  return sheet
+}
+
+// 시트 여러 장을 한 파일로 내려받습니다. sheets: [{ name, headers, rows }]
+export const downloadXlsxBook = (filename, sheets) => {
   const book = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(book, sheet, sheetName.slice(0, 31))
+  for (const { name, headers, rows } of sheets) XLSX.utils.book_append_sheet(book, makeSheet(headers, rows), name.slice(0, 31))
   XLSX.writeFile(book, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`)
 }
+
+// rows는 headers 순서의 값 배열입니다. 문자열은 수식으로 해석되지 않고 글자 그대로 저장됩니다.
+export const downloadXlsx = (filename, sheetName, headers, rows) => downloadXlsxBook(filename, [{ name: sheetName, headers, rows }])
 
 const readBook = async (file) => {
   const data = await file.arrayBuffer()

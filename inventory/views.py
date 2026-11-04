@@ -246,7 +246,7 @@ def alert_if_low_stock(item):
         send_webhook_alert(f"재고 부족 경고! {item.name}의 현재 재고가 {item.quantity}개로 안전 재고({item.safety_stock}개) 이하입니다. 긴급 발주가 필요합니다.")
 
 
-def change_serial_status(serial, new_status, quality=None, description='', user=None):
+def change_serial_status(serial, new_status, quality=None, description='', user=None, work='조정', reference=''):
     """시리얼 상태를 바꾸고, 재고보유 여부가 달라지면 재고 수량과 이력도 함께 맞춥니다. 실패 시 오류 문구를 반환합니다."""
     item = Item.objects.select_for_update().get(pk=serial.item_id)
     was_in_stock = serial.status == IN_STOCK
@@ -259,13 +259,13 @@ def change_serial_status(serial, new_status, quality=None, description='', user=
         item.save(update_fields=['quantity'])
         stock.remove(item, 1, prefer=serial.location)
         serial.location = None  # 선반에서 빠진 기기
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=description[:200], user=user)
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=description[:200], user=user, work=work, reference=reference)
         alert_if_low_stock(item)
     elif is_in_stock and not was_in_stock:
         item.quantity += 1
         item.save(update_fields=['quantity'])
         serial.location = stock.add(item, 1)  # 기본 위치로 되돌립니다.
-        InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=description[:200], user=user)
+        InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=description[:200], user=user, work=work, reference=reference)
 
     serial.status = new_status
     if quality:
@@ -472,7 +472,7 @@ class ItemViewSet(viewsets.ModelViewSet):
                         item.quantity = max(0, item.quantity + diff)
                         item.save(update_fields=['quantity'])
                         if diff:
-                            InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user)
+                            InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user, work='조정')
                         if diff < 0:
                             alert_if_low_stock(item)
                         applied.append(f'[{item.sku}] 이 위치 {located:+d}' + (f', 총재고 {diff:+d}' if diff != located else ''))
@@ -510,7 +510,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         item.location = new_location
         item.save(update_fields=['location'])
         old_location_str = old_location.full_code if old_location else '미지정'
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개", user=request.user)
+        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개", user=request.user, work='이동')
         return Response({'message': '보관 위치 이동 완료', 'location': new_location.full_code})
 
     @action(detail=True, methods=['post'])
@@ -543,7 +543,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             return error_response(error)
         ItemSerial.objects.filter(id__in=[s.id for s in serials]).update(location=target)
         where = source.full_code if source else '미지정'
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, user=request.user,
+        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, user=request.user, work='이동',
                                     description=f'재고 이동: [{where}] ➔ [{target.full_code}] {quantity}개' + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''))
         return Response({'message': f'[{item.sku}] {quantity}개를 {target.full_code}로 옮겼습니다.', 'item': self.get_serializer(item).data})
 
@@ -607,7 +607,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             if 'physicalQty' in self.request.data: # 실사 조정일 경우
                 description = "월말 재고 실사 조정"
                 send_webhook_alert(f"재고 오차 조정 발생: {item.name} ({quantity_diff}개)")
-            InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user)
+            InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user, work='조정')
 
             # 🌟 NEW: 안전 재고 이하로 떨어졌을 때 웹훅 알림 발송
             if quantity_diff < 0:
@@ -628,7 +628,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         item.quantity += change
         item.save(update_fields=['quantity'])
         stock.add(item, change) if change > 0 else stock.remove(item, -change)
-        InventoryLog.objects.create(item=item, action='IN' if change > 0 else 'OUT', quantity_changed=change, user=request.user)
+        InventoryLog.objects.create(item=item, action='IN' if change > 0 else 'OUT', quantity_changed=change, user=request.user, work='조정')
         if change < 0:
             alert_if_low_stock(item)
         return Response(self.get_serializer(item).data)
@@ -661,7 +661,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             item.quantity += 1
             item.save(update_fields=['quantity'])
             stock.add(item, 1)
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user)
+            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user, work='조정')
             return Response({'message': f'S/N [{serial_number}] 입고 완료'})
 
         serial_obj = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item, status=IN_STOCK).first()
@@ -672,7 +672,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         serial_obj.save()
         item.quantity -= 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=f'시리얼 직접 출고 S/N {serial_number}', user=request.user)
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=f'시리얼 직접 출고 S/N {serial_number}', user=request.user, work='조정')
 
         # 🌟 NEW: 출고 후 안전 재고 체크
         alert_if_low_stock(item)
@@ -838,7 +838,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         master_item.save(update_fields=['quantity'])
         stock.add(master_item, receive_qty, target)
         description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '') + (f" → {target.full_code}" if target else '')
-        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user)
+        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user, work='입고', reference=po.po_number)
 
         # 모든 품목 입고 완료 체크
         all_received = all(i.received_quantity >= i.order_quantity for i in po.items.all())
@@ -897,7 +897,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         item.quantity -= cancel_qty
         item.save(update_fields=['quantity'])
         description = f'발주번호 {po.po_number} 입고 취소' + (f' S/N {serial_number}' if serial else '')
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user)
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user, work='입고취소', reference=po.po_number)
         alert_if_low_stock(item)
 
         po.status = '입고중' if any(line.received_quantity > 0 for line in po.items.all()) else '발주대기'
@@ -1219,7 +1219,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 stock.remove(item, 1, prefer=serial.location)
             stock.remove(item, line.quantity - len(picked))
             ItemSerial.objects.filter(id__in=[s.id for s in picked]).update(status='출고완료', location=None, updated_at=timezone.now())
-            InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고', user=request.user)
+            InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고', user=request.user, work='출고', reference=order.order_no)
             alert_if_low_stock(item)
 
         order.status = '출고완료'
@@ -1322,9 +1322,12 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
             return error_response(f'출고완료 상태의 시리얼만 회수할 수 있습니다. (현재: {serial.status})')
 
         description = f'반품 {return_order.return_no} 회수: {serial.serial_number}' + (f' ({detail})' if detail else '')
-        error = change_serial_status(serial, new_status, quality, description, request.user)
+        error = change_serial_status(serial, new_status, quality, description, request.user, work='반품', reference=return_order.return_no)
         if error:
             return error_response(error)
+        if new_status != IN_STOCK:  # 재고로 돌아오지 않는 회수(AS·폐기)도 실적에 남도록 기록합니다.
+            InventoryLog.objects.create(item=serial.item, action='RETURN', quantity_changed=0, description=f'{description} → {new_status}'[:200],
+                                        user=request.user, work='반품', reference=return_order.return_no)
 
         return_order.status, return_order.result = '회수완료', label
         return_order.completed_at = timezone.now()
@@ -1341,7 +1344,11 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
             item.quantity += return_order.quantity
             item.save(update_fields=['quantity'])
             stock.add(item, return_order.quantity)
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=return_order.quantity, description=description[:200], user=request.user)
+            InventoryLog.objects.create(item=item, action='IN', quantity_changed=return_order.quantity, description=description[:200], user=request.user,
+                                        work='반품', reference=return_order.return_no)
+        else:  # 폐기해도 회수 작업은 한 것이므로 수량 0으로 기록합니다.
+            InventoryLog.objects.create(item=item, action='RETURN', quantity_changed=0, description=f'{description} → 폐기'[:200], user=request.user,
+                                        work='반품', reference=return_order.return_no)
         return_order.status, return_order.result = '회수완료', label or ('재고로 되돌림' if result == 'restock' else '폐기')
         return_order.completed_at = timezone.now()
         return_order.save(update_fields=['status', 'result', 'completed_at'])
@@ -1593,6 +1600,79 @@ class DashboardAPIView(APIView):
         top_moving_data = [{'sku': row['item__sku'], 'name': row['item__name'], 'movements': row['movements']} for row in top_moving]
 
         return Response({'trend': trend_data, 'occupancy': occupancy_data, 'today_count': today_count, 'top_moving': top_moving_data}, status=status.HTTP_200_OK)
+
+
+REPORT_MAX_DAYS = 93
+
+
+class WorkerReportAPIView(APIView):
+    """작업자별 실적: 기간 안에 누가 어떤 작업을 얼마나 했는지 셉니다.
+    건수는 문서(발주·주문·반품) 수, 문서가 없는 작업(이동·조정)은 처리한 줄 수입니다."""
+    permission_classes = [IsAdminUser]
+    WORKS = [name for name, _ in InventoryLog.WORK_CHOICES]
+
+    def get(self, request):
+        today = timezone.localdate()
+        end = parse_date_param(request.query_params.get('end_date')) or today
+        start = parse_date_param(request.query_params.get('start_date')) or end - timedelta(days=6)
+        if start > end:
+            return error_response('시작일이 종료일보다 늦습니다.')
+        if (end - start).days >= REPORT_MAX_DAYS:
+            return error_response(f'기간은 최대 {REPORT_MAX_DAYS}일까지 조회할 수 있습니다.')
+
+        logs = (InventoryLog.objects.filter(timestamp__gte=day_start(start), timestamp__lt=day_start(end + timedelta(days=1)))
+                .exclude(work='').values('user_id', 'work', 'reference', 'quantity_changed', 'timestamp', 'description'))
+        users = {u.id: u for u in User.objects.filter(id__in={row['user_id'] for row in logs if row['user_id']})}
+        return_quantities = dict(ReturnOrder.objects.filter(return_no__in={row['reference'] for row in logs if row['work'] == '반품'})
+                                 .values_list('return_no', 'quantity'))
+
+        def blank():
+            return {work: {'count': 0, 'lines': 0, 'quantity': 0} for work in self.WORKS}
+
+        workers, daily, refs = {}, {}, set()
+        for row in logs:
+            uid = row['user_id']
+            if uid not in workers:
+                user = users.get(uid)
+                workers[uid] = {'user_id': uid, 'username': user.username if user else '', 'name': user_display(user) if user else '(기록 없음)',
+                                'is_staff': bool(user and user.is_staff), 'works': blank(), 'lines': 0, 'first': None, 'last': None}
+            worker, work = workers[uid], row['work']
+            cell = worker['works'][work]
+            cell['lines'] += 1
+            worker['lines'] += 1
+            # 문서 번호가 있으면 문서 단위로 한 번만 셉니다.
+            key = (uid, work, row['reference'])
+            if not row['reference'] or key not in refs:
+                refs.add(key)
+                cell['count'] += 1
+                if work == '반품':
+                    cell['quantity'] += return_quantities.get(row['reference'], 1)
+            if work != '반품':
+                cell['quantity'] += abs(row['quantity_changed']) or moved_quantity(row['description'])
+            stamp = timezone.localtime(row['timestamp'])
+            worker['first'] = min(worker['first'] or stamp, stamp)
+            worker['last'] = max(worker['last'] or stamp, stamp)
+            day = daily.setdefault((stamp.date(), uid), {'date': stamp.date().isoformat(), 'user_id': uid, 'name': worker['name'], 'works': {w: 0 for w in self.WORKS}, 'lines': 0})
+            day['works'][work] += 1
+            day['lines'] += 1
+
+        rows = sorted(workers.values(), key=lambda w: (-w['lines'], w['name']))
+        for worker in rows:
+            worker['first'] = worker['first'] and worker['first'].isoformat()
+            worker['last'] = worker['last'] and worker['last'].isoformat()
+        return Response({
+            'start_date': start.isoformat(), 'end_date': end.isoformat(), 'works': self.WORKS, 'workers': rows,
+            'daily': sorted(daily.values(), key=lambda d: (d['date'], d['name'])),
+        })
+
+
+MOVED_PATTERN = re.compile(r'\] (\d+)개')
+
+
+def moved_quantity(description):
+    # 위치 이동 기록은 재고 수량이 바뀌지 않아(0) 설명의 "… N개"에서 옮긴 개수를 읽습니다.
+    match = MOVED_PATTERN.search(description or '')
+    return int(match.group(1)) if match else 0
 
 
 @method_decorator(transaction.non_atomic_requests, name='dispatch')

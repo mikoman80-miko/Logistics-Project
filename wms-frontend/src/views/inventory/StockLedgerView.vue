@@ -91,6 +91,7 @@
 import { ref, onActivated, onMounted } from 'vue';
 import axios from 'axios';
 import { downloadXlsx } from '../../utils/excel';
+import { localDate } from '../../utils/date';
 import { useToastStore } from '../../stores/toastStore';
 
 const ledgerList = ref([]);
@@ -103,7 +104,7 @@ const initDates = () => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   startDate.value = `${year}-${month}-01`;
-  endDate.value = date.toISOString().split('T')[0];
+  endDate.value = localDate(date);
 };
 
 const fetchLedger = async () => {

@@ -244,10 +244,15 @@ class InventoryLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     description = models.CharField(max_length=200, blank=True, null=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+') # 처리자
+    # 작업 종류와 문서 번호. 작업자별 실적을 셀 때 씁니다. (재고 등록·삭제처럼 업무 작업이 아닌 기록은 빈 값)
+    WORK_CHOICES = [('입고', '입고'), ('입고취소', '입고취소'), ('출고', '출고'), ('반품', '반품'), ('이동', '이동'), ('조정', '조정')]
+    work = models.CharField(max_length=10, choices=WORK_CHOICES, blank=True, default='')
+    reference = models.CharField(max_length=30, blank=True, default='')
 
     class Meta:
         indexes = [
             models.Index(fields=['-timestamp'], name='log_time_idx'),
+            models.Index(fields=['work', 'timestamp'], name='log_work_time_idx'),
             models.Index(fields=['item', '-timestamp'], name='log_item_time_idx'),
             models.Index(fields=['action', '-timestamp'], name='log_action_time_idx'),
         ]

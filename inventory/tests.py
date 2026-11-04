@@ -1235,3 +1235,66 @@ class BadgeLoginTests(BaseCase):
         User.objects.filter(pk=self.worker.pk).update(is_active=False)
         self.assertEqual(self.client.post(self.URL, {'code': code}).status_code, 401)
         self.assertEqual(self.client.post(self.URL, {'code': 'EMP-WRONG'}).status_code, 401)
+
+
+class WorkerReportTests(BaseCase):
+    URL = '/api/inventory/reports/workers/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def ship(self, quantity):
+        order = self.client.post(ORDERS, {'customer': '고객', 'items': [{'item': self.item.id, 'quantity': quantity}]}, format='json').data
+        self.client.force_authenticate(self.worker)
+        self.client.post(f'{ORDERS}{order["id"]}/scan/', {'code': 'A-1', 'quantity': quantity}, format='json')
+        self.assertEqual(self.client.post(f'{ORDERS}{order["id"]}/complete/').status_code, 200)
+        self.client.force_authenticate(self.admin)
+        return order
+
+    def test_counts_documents_per_worker(self):
+        order = self.ship(2)
+        self.ship(1)
+        log = InventoryLog.objects.filter(work='출고').first()
+        self.assertEqual((log.user, log.reference), (self.worker, order['order_no']))
+        # 관리자가 직접 수량 조정
+        self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 4}, format='json')
+        # 반품 회수: 폐기해도 실적에 남습니다.
+        ret = self.client.post(RETURNS, {'customer': '고객', 'reason': '파손', 'item': self.item.id, 'quantity': 2}, format='json').data
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(f'{RETURNS}{ret["id"]}/complete/', {'result': 'dispose'}, format='json').status_code, 200)
+        self.client.force_authenticate(self.admin)
+
+        res = self.client.get(self.URL)
+        self.assertEqual(res.status_code, 200)
+        rows = {row['username']: row for row in res.data['workers']}
+        worker = rows['worker']['works']
+        self.assertEqual((worker['출고']['count'], worker['출고']['quantity']), (2, 3))
+        self.assertEqual((worker['반품']['count'], worker['반품']['quantity']), (1, 2))
+        self.assertEqual((rows['boss']['works']['조정']['count'], rows['boss']['works']['조정']['quantity']), (1, 4))
+        self.assertEqual(sum(day['lines'] for day in res.data['daily']), 4)
+
+    def test_serial_return_without_restock_is_recorded(self):
+        serial = ItemSerial.objects.create(item=self.item, serial_number='S9', status='출고완료')
+        ret = self.client.post(RETURNS, {'customer': '고객', 'reason': '불량', 'serial': serial.id}, format='json').data
+        self.client.post(f'{RETURNS}{ret["id"]}/complete/', {'status': 'AS진행중'}, format='json')
+        log = InventoryLog.objects.get(work='반품')
+        self.assertEqual((log.action, log.quantity_changed, log.reference), ('RETURN', 0, ret['return_no']))
+
+    def test_move_counts_moved_quantity(self):
+        a = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        b = WarehouseLocation.objects.create(zone='A', rack='R2', tier=1)
+        ItemStock.objects.create(item=self.item, location=a, quantity=5)
+        res = self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': a.id, 'to': b.id, 'quantity': 3}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        boss = self.client.get(self.URL).data['workers'][0]
+        self.assertEqual((boss['works']['이동']['count'], boss['works']['이동']['quantity']), (1, 3))
+
+    def test_period_and_permission(self):
+        self.ship(1)
+        yesterday = (timezone.localdate() - timedelta(days=1)).isoformat()
+        self.assertEqual(self.client.get(self.URL, {'start_date': yesterday, 'end_date': yesterday}).data['workers'], [])
+        self.assertEqual(self.client.get(self.URL, {'start_date': '2026-01-01', 'end_date': '2026-12-31'}).status_code, 400)
+        self.assertEqual(self.client.get(self.URL, {'start_date': '2026-02-01', 'end_date': '2026-01-01'}).status_code, 400)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)

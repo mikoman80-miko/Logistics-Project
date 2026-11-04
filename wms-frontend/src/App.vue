@@ -116,6 +116,7 @@ const menuGroups = [
   { title: '보고서', menus: [
     { title: '입출고 장부', path: '/ledger' },
     { title: '입출고 통계', path: '/dashboard' },
+    { title: '작업자 실적', path: '/workers' },
   ] },
   { title: '기본 설정', menus: [
     { title: '상품', path: '/items' },
