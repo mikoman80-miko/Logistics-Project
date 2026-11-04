@@ -84,6 +84,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ItemSerializer(serializers.ModelSerializer):
     category_name = serializers.ReadOnlyField(source='category.name')
     location_name = serializers.ReadOnlyField(source='location.full_code')
+    location_barcode = serializers.ReadOnlyField(source='location.barcode')
     quantity = serializers.IntegerField(min_value=0, required=False)
     safety_stock = serializers.IntegerField(min_value=0, required=False)
     in_stock_serials = serializers.SerializerMethodField()
@@ -116,6 +117,7 @@ class PurchaseOrderItemSerializer(serializers.ModelSerializer):
     item_name = serializers.CharField(source='item.name', read_only=True)
     serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
     location_name = serializers.ReadOnlyField(source='item.location.full_code')
+    location_barcode = serializers.ReadOnlyField(source='item.location.barcode')
     order_quantity = serializers.IntegerField(min_value=1)
     received_serials = serializers.SerializerMethodField()
 
@@ -152,6 +154,7 @@ class SalesOrderItemSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source='item.sku', read_only=True)
     item_name = serializers.CharField(source='item.name', read_only=True)
     location_name = serializers.ReadOnlyField(source='item.location.full_code')
+    location_barcode = serializers.ReadOnlyField(source='item.location.barcode')
     current_quantity = serializers.IntegerField(source='item.quantity', read_only=True)
     serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
     quantity = serializers.IntegerField(min_value=1)
@@ -245,6 +248,7 @@ class InventoryLogSerializer(serializers.ModelSerializer):
       
 class WarehouseLocationSerializer(serializers.ModelSerializer):
     full_code = serializers.ReadOnlyField()
+    barcode = serializers.ReadOnlyField()
 
     class Meta:
         model = WarehouseLocation

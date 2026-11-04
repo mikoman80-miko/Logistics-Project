@@ -141,6 +141,7 @@ import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
 
@@ -148,6 +149,7 @@ const router = useRouter()
 const route = useRoute()
 const store = useInventoryStore()
 const toast = useToastStore()
+const dialog = useDialogStore()
 
 const orders = ref([])
 const selected = ref(null)
@@ -253,7 +255,8 @@ const track = async () => {
 }
 
 const cancelOrder = async () => {
-  if (!confirm(`[${selected.value.order_no}] 주문을 취소하시겠습니까?`)) return
+  const waybill = selected.value.waybill_no ? `\n운송장 ${selected.value.waybill_no}도 택배사에 취소를 요청합니다.` : ''
+  if (!(await dialog.confirm(`[${selected.value.order_no}] 주문을 취소하시겠습니까?${waybill}`, { danger: true, okText: '주문 취소', cancelText: '닫기' }))) return
   try {
     const result = await store.cancelOrder(selected.value.id)
     toast.addToast(result.message, 'info')

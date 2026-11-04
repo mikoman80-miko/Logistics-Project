@@ -197,6 +197,7 @@ import { ref, computed, onActivated } from 'vue';
 import axios from 'axios';
 import { useToastStore } from '../../stores/toastStore';
 import { apiErrorMessage } from '../../utils/apiError';
+import { useDialogStore } from '../../stores/dialogStore';
 
 const items = ref([]);
 const locations = ref([]);
@@ -211,6 +212,7 @@ const ITEM_TYPES = ['상품', '구성품', '부자재', '사은품'];
 const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, safety_stock: 5, category: null });
 const newItemForm = ref(emptyItemForm());
 const toast = useToastStore();
+const dialog = useDialogStore();
 const csvInput = ref(null);
 
 const fetchItems = async () => {
@@ -267,7 +269,7 @@ const changeItem = async (item, change) => {
 };
 
 const addCategory = async () => {
-  const name = prompt('새 카테고리 이름을 입력하세요.')?.trim();
+  const name = await dialog.prompt('새 카테고리 이름을 입력하세요.', { title: '카테고리 추가', okText: '추가', maxlength: 100 });
   if (!name) return;
   try {
     const res = await axios.post('/api/inventory/categories/', { name });
@@ -286,7 +288,7 @@ const handleAddItem = async () => {
 };
 
 const deleteItem = async (id) => {
-  if (!confirm('정말 이 상품을 삭제하시겠습니까?')) return;
+  if (!(await dialog.confirm('이 상품을 삭제하시겠습니까?\n입출고 이력은 남고 목록에서만 사라집니다.', { danger: true, okText: '삭제' }))) return;
   try {
     await axios.delete(`/api/inventory/items/${id}/`);
     toast.addToast('상품이 삭제되었습니다.', 'success');

@@ -17,7 +17,10 @@
         <template v-if="current">
           <div class="work-task">
             <div class="text-4xl text-muted">{{ doneLines }} / {{ order.items.length }} 품목 완료</div>
-            <div class="text-[64px] font-bold text-warning leading-tight">📍 {{ current.location_name || '위치 미지정' }}</div>
+            <div class="text-[64px] font-bold text-warning leading-tight">📍 {{ current.location_name || '위치 미지정' }}
+              <span v-if="location.isVerified(current)" class="text-success text-4xl align-middle">✔ 위치 확인</span>
+            </div>
+            <div v-if="current.location_barcode && !location.isVerified(current)" class="text-2xl text-muted">선반의 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.</div>
             <div class="text-[56px] font-bold leading-tight">{{ current.item_name }}</div>
             <div class="text-4xl font-mono">{{ current.item_sku }}</div>
             <div class="text-[80px] font-bold leading-tight">
@@ -70,10 +73,14 @@ import WorkLayout from '../../components/work/WorkLayout.vue'
 import ScanBox from '../../components/work/ScanBox.vue'
 import QuantityDialog from '../../components/work/QuantityDialog.vue'
 import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
+import { useDialogStore } from '../../stores/dialogStore'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
+import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const { ok, fail } = useWorkFeedback()
+const location = useLocationCheck()
+const dialog = useDialogStore()
 const orders = ref([])
 const order = ref(null)
 const contextSku = ref('')
@@ -107,6 +114,7 @@ const applyResult = (data) => {
 }
 
 const onScan = async (code) => {
+  if (isLocationCode(code)) return location.check(code, current.value, '에서 꺼냅니다')
   try {
     const res = await axios.post(`/api/inventory/orders/${order.value.id}/scan/`, { code, sku: contextSku.value })
     const scannedSku = res.data.sku || (res.data.order.items.some(line => line.item_sku === code) ? code : contextSku.value)
@@ -129,7 +137,7 @@ const enterQuantity = async (quantity) => {
 }
 
 const resetLine = async (line) => {
-  if (!confirm(`[${line.item_name}] 스캔을 지우고 다시 하시겠습니까?`)) return
+  if (!(await dialog.confirm(`[${line.item_name}]\n스캔한 내용을 지우고 다시 스캔하시겠습니까?`, { title: '다시 스캔', okText: '지우기', cancelText: '그대로 두기', large: true, danger: true, focusCancel: true }))) return
   try {
     const res = await axios.post(`/api/inventory/orders/${order.value.id}/reset_line/`, { line: line.id })
     contextSku.value = ''
@@ -154,6 +162,7 @@ const complete = async () => {
 
 const leave = async () => {
   order.value = null
+  location.reset()
   contextSku.value = ''
   await load()
 }

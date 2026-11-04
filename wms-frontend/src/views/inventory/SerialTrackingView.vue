@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <SerialHistoryModal v-if="historySerial" :serial-id="historySerial.id" :serial-number="historySerial.serial_number" @close="historySerial = null" />
     <!-- 상단 컨트롤 영역 -->
     <div class="panel p-1.5 print:hidden">
       <table class="form-table">
@@ -120,9 +121,9 @@
             <tr v-if="paginatedSerials.length === 0">
               <td colspan="7" class="text-center">조회된 시리얼 데이터가 없습니다.</td>
             </tr>
-            <tr v-for="serial in paginatedSerials" :key="serial.id" :class="rowClass(serial)"
-             >
-              <td class="text-center"><input type="checkbox"
+            <tr v-for="serial in paginatedSerials" :key="serial.id" class="is-clickable" :class="rowClass(serial)"
+              title="누르면 이력을 봅니다" @click="historySerial = serial">
+              <td class="text-center" @click.stop><input type="checkbox"
                   :value="serial.id" v-model="selectedIds" /></td>
               <td class="text-center font-mono font-bold">{{
                 serial.serial_number }}</td>
@@ -158,8 +159,15 @@
 <script setup>
 import { ref, computed, onActivated, watch } from 'vue'
 import { useInventoryStore } from '../../stores/inventory'
+import { useToastStore } from '../../stores/toastStore'
+import { apiErrorMessage } from '../../utils/apiError'
+import { useDialogStore } from '../../stores/dialogStore'
+import SerialHistoryModal from '../../components/SerialHistoryModal.vue'
 
 const store = useInventoryStore()
+const historySerial = ref(null)
+const toast = useToastStore()
+const dialog = useDialogStore()
 const searchQuery = ref('')
 const filterStatus = ref('ALL')
 const filterQuality = ref('ALL')
@@ -202,18 +210,18 @@ const toggleSelectAll = (event) => {
 }
 
 const applyBatchUpdate = async () => {
-  if (!batchStatus.value && !batchQuality.value) return alert('변경할 상태나 품질을 선택해 주세요.')
-  if (!confirm(`선택한 ${selectedIds.value.length}개 시리얼의 상태를 일괄 변경하시겠습니까?`)) return
+  if (!batchStatus.value && !batchQuality.value) return toast.addToast('변경할 상태나 품질을 선택해 주세요.', 'error')
+  if (!(await dialog.confirm(`선택한 ${selectedIds.value.length}개 시리얼의 상태를 일괄 변경하시겠습니까?`, { okText: '변경' }))) return
 
   try {
     await store.batchUpdateSerials(selectedIds.value, batchStatus.value, batchQuality.value)
   } catch (err) {
-    return alert(err.response?.data?.error || '일괄 업데이트 중 오류가 발생했습니다.')
+    return toast.addToast(apiErrorMessage(err, '일괄 변경 중 오류가 발생했습니다.'), 'error', 5000)
   }
   selectedIds.value = []
   batchStatus.value = ''
   batchQuality.value = ''
-  alert('일괄 업데이트가 완료되었습니다.')
+  toast.addToast('일괄 변경을 완료했습니다.', 'success')
 }
 
 const rowClass = (serial) => {

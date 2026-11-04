@@ -64,6 +64,8 @@
 
   </div>
 
+  <AppDialog />
+
   <div class="fixed bottom-[30px] right-[30px] z-[9999] flex flex-col gap-2.5 pointer-events-none print:hidden">
     <transition-group enter-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
       leave-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
@@ -84,6 +86,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useTabStore } from './stores/tabStore'
 import { useToastStore } from './stores/toastStore'
+import AppDialog from './components/AppDialog.vue'
 
 const route = useRoute()
 const router = useRouter()

@@ -819,3 +819,45 @@ class OrderEditTests(BaseCase):
     def test_worker_cannot_edit(self):
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.edit(note='x').status_code, 403)
+
+
+class SerialHistoryAndLocationBarcodeTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.loc = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=0, location=self.loc)
+
+    def test_location_barcode_in_lists(self):
+        self.assertEqual(self.client.get('/api/inventory/locations/').data[0]['barcode'], f'LOC{self.loc.id:05d}')
+        po = PurchaseOrder.objects.create(po_number='PO-1')
+        PurchaseOrderItem.objects.create(po=po, item=self.product, order_quantity=1)
+        self.assertEqual(self.client.get(f'{POS}{po.id}/').data['items'][0]['location_barcode'], f'LOC{self.loc.id:05d}')
+        order = SalesOrder.objects.create(order_no='ORD-1', customer='c')
+        SalesOrderItem.objects.create(order=order, item=self.item, quantity=1)
+        self.assertIsNone(self.client.get(f'{ORDERS}{order.id}/').data['items'][0].get('location_barcode'))
+
+    def test_serial_history_follows_the_device(self):
+        po = PurchaseOrder.objects.create(po_number='PO-1')
+        PurchaseOrderItem.objects.create(po=po, item=self.product, order_quantity=1)
+        self.client.post(f'{POS}{po.id}/receive_inbound/', {'sku': 'P-1', 'serial_number': 'SN1'}, format='json')
+        # 이름이 겹치는 다른 시리얼의 기록은 섞이지 않습니다.
+        InventoryLog.objects.create(item=self.product, action='IN', quantity_changed=1, description='발주번호 X 정상 입고 S/N SN10')
+        order_id = self.client.post(ORDERS, {'customer': '고객', 'items': [{'item': self.product.id, 'quantity': 1}]}, format='json').data['id']
+        self.client.post(f'{ORDERS}{order_id}/scan/', {'code': 'SN1'}, format='json')
+        self.assertEqual(self.client.post(f'{ORDERS}{order_id}/complete/').status_code, 200)
+        serial = ItemSerial.objects.get(serial_number='SN1')
+        ret_id = self.client.post(RETURNS, {'customer': '고객', 'reason': '전원불량', 'serial': serial.id}, format='json').data['id']
+        self.client.post(f'{RETURNS}{ret_id}/complete/', {'status': '재고보유', 'quality': '양품A급'}, format='json')
+
+        res = self.client.get(f'{SERIALS}{serial.id}/history/')
+        self.assertEqual(res.status_code, 200)
+        titles = [e['title'] for e in res.data['events']]
+        self.assertEqual(titles, ['입고', '주문 출고', '반품 등록', '반품 회수 완료'])
+        self.assertIn('PO-1', res.data['events'][0]['detail'])
+        self.assertEqual(res.data['events'][0]['user'], 'boss')
+
+    def test_direct_scan_is_recorded_with_serial(self):
+        self.client.post(f'{ITEMS}scan_serial/', {'sku': 'P-1', 'serial_number': 'SN9', 'type': 'in'}, format='json')
+        serial = ItemSerial.objects.get(serial_number='SN9')
+        self.assertEqual([e['detail'] for e in self.client.get(f'{SERIALS}{serial.id}/history/').data['events']], ['시리얼 직접 입고 S/N SN9'])

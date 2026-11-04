@@ -1,5 +1,6 @@
 import csv
 import logging
+import re
 from datetime import datetime, time, timedelta
 from io import StringIO
 
@@ -440,7 +441,7 @@ class ItemViewSet(viewsets.ModelViewSet):
                 return error_response('이미 창고에 등록된 시리얼 번호입니다.')
             item.quantity += 1
             item.save(update_fields=['quantity'])
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, user=request.user)
+            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user)
             return Response({'message': f'S/N [{serial_number}] 입고 완료'})
 
         serial_obj = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item, status=IN_STOCK).first()
@@ -450,7 +451,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         serial_obj.save()
         item.quantity -= 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, user=request.user)
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=f'시리얼 직접 출고 S/N {serial_number}', user=request.user)
 
         # 🌟 NEW: 출고 후 안전 재고 체크
         alert_if_low_stock(item)
@@ -1017,6 +1018,46 @@ class ItemSerialViewSet(viewsets.ModelViewSet):
     queryset = ItemSerial.objects.select_related('item').order_by('-updated_at')
     serializer_class = ItemSerialSerializer
     permission_classes = [IsAdminRole]
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        # 기기 한 대가 언제 들어와서 어느 주문으로 나갔고, 반품으로 어떻게 돌아왔는지 시간순으로 모읍니다.
+        serial = self.get_object()
+        sn = serial.serial_number
+        mentions = re.compile(rf'(?<![0-9A-Za-z_-]){re.escape(sn)}(?![0-9A-Za-z_-])')
+        events = []
+
+        def add(when, kind, title, detail='', user=None, waybill='', carrier_status=''):
+            events.append({'time': when, 'kind': kind, 'title': title, 'detail': detail, 'user': user_display(user),
+                           'waybill_no': waybill, 'carrier_status': carrier_status, 'tracking_url': carrier.tracking_url(waybill)})
+
+        logs = [log for log in InventoryLog.objects.filter(item=serial.item, description__contains=sn).select_related('user')
+                if mentions.search(log.description or '') and not log.description.startswith('반품 ')]
+        if not any(log.action == 'IN' for log in logs):
+            source = f'발주 {serial.po_item.po.po_number}' if serial.po_item_id else ''
+            add(serial.created_at, 'in', '시리얼 등록', source)
+        for log in logs:
+            add(log.timestamp, 'in' if log.quantity_changed > 0 else 'out' if log.quantity_changed < 0 else 'etc',
+                InventoryLogSerializer.ACTION_NAMES.get(log.action, log.action), log.description, log.user)
+
+        for pick in serial.order_picks.select_related('line__order__created_by'):
+            order = pick.line.order
+            detail = f'주문 {order.order_no} · {order.customer}'
+            if order.status == '출고완료':
+                add(order.completed_at, 'out', '주문 출고', detail, None, order.waybill_no, order.carrier_status)
+            else:
+                add(None, 'etc', f'출고 스캔됨 ({order.status})', detail, None, order.waybill_no, order.carrier_status)
+
+        for ret in serial.returns.select_related('created_by'):
+            add(ret.created_at, 'return', '반품 등록', f'반품 {ret.return_no} · {ret.customer} · {ret.reason}', ret.created_by, ret.waybill_no, ret.carrier_status)
+            if ret.status == '회수완료':
+                add(ret.completed_at, 'return', '반품 회수 완료', f'반품 {ret.return_no}')
+            elif ret.status == '취소됨':
+                add(None, 'etc', '반품 취소', f'반품 {ret.return_no}')
+
+        # 시각이 없는 진행 중 항목은 맨 뒤에 둡니다.
+        events.sort(key=lambda e: (e['time'] is None, e['time'] or serial.created_at))
+        return Response({'serial': self.get_serializer(serial).data, 'events': events})
 
     @action(detail=False, methods=['patch'])
     def batch_update(self, request):

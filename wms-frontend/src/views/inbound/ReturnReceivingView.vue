@@ -117,6 +117,7 @@ import { apiErrorMessage } from '../../utils/apiError'
 import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 
 const RETURN_REASONS = ['단순변심', '전원불량', '액정파손', '기타']
@@ -125,6 +126,7 @@ const router = useRouter()
 const route = useRoute()
 const store = useInventoryStore()
 const toast = useToastStore()
+const dialog = useDialogStore()
 
 const returns = ref([])
 const statusFilter = ref('회수대기')
@@ -192,7 +194,7 @@ const requestPickup = () => callCarrier('request_pickup', pickupForm.value, '회
 const track = () => callCarrier('track', {}, '회수 조회 중 오류가 발생했습니다.')
 
 const cancelReturn = async (row) => {
-  if (!confirm(`[${row.return_no}] 반품을 취소하시겠습니까?`)) return
+  if (!(await dialog.confirm(`[${row.return_no}] 반품을 취소하시겠습니까?`, { danger: true, okText: '반품 취소', cancelText: '닫기' }))) return
   try {
     const result = await store.cancelReturn(row.id)
     toast.addToast(result.message, 'info')

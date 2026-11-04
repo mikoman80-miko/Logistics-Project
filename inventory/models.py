@@ -25,6 +25,11 @@ class WarehouseLocation(models.Model):
             return f"{self.zone}-{self.rack}-{self.tier}단-{self.cell}"
         return f"{self.zone}-{self.rack}-{self.tier}단"
 
+    @property
+    def barcode(self):
+        # 위치 코드에는 한글(단, 동)이 들어갈 수 있어 바코드에는 번호를 씁니다.
+        return f'LOC{self.id:05d}' if self.id else ''
+
     def __str__(self):
         return self.full_code
 

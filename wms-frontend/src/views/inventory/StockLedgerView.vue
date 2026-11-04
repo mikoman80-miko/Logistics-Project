@@ -91,8 +91,10 @@
 import { ref, onActivated, onMounted } from 'vue';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import { useToastStore } from '../../stores/toastStore';
 
 const ledgerList = ref([]);
+const toast = useToastStore();
 const startDate = ref('');
 const endDate = ref('');
 
@@ -117,7 +119,7 @@ const fetchLedger = async () => {
 
 const exportExcel = () => {
   if (ledgerList.value.length === 0) {
-    alert('다운로드할 수불부 데이터가 없습니다.');
+    toast.addToast('다운로드할 수불부 데이터가 없습니다.', 'error');
     return;
   }
   const excelData = ledgerList.value.map(row => ({

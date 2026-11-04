@@ -137,11 +137,13 @@ import { useToastStore } from '../../stores/toastStore'
 import { useInventoryStore } from '../../stores/inventory'
 import OrderLinesEditor from '../../components/OrderLinesEditor.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import { useDialogStore } from '../../stores/dialogStore'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const router = useRouter()
 const toast = useToastStore()
 const store = useInventoryStore()
+const dialog = useDialogStore()
 
 const poList = ref([])
 const statusFilter = ref('')
@@ -170,7 +172,7 @@ const openForm = async () => {
 }
 
 const addSupplier = async () => {
-  const name = prompt('신규 거래처 이름을 입력하세요.')?.trim()
+  const name = await dialog.prompt('신규 거래처 이름을 입력하세요.', { title: '신규 거래처', okText: '등록', maxlength: 100 })
   if (!name) return
   try {
     const res = await axios.post('/api/inventory/suppliers/', { name })
@@ -222,7 +224,7 @@ const submitCancel = async () => {
 }
 
 const cancelPO = async () => {
-  if (!confirm(`[${selected.value.po_number}] 발주서를 취소하시겠습니까?`)) return
+  if (!(await dialog.confirm(`[${selected.value.po_number}] 발주서를 취소하시겠습니까?`, { danger: true, okText: '발주 취소', cancelText: '닫기' }))) return
   try {
     const res = await axios.post(`/api/inventory/purchase-orders/${selected.value.id}/cancel/`)
     toast.addToast(res.data.message, 'info')

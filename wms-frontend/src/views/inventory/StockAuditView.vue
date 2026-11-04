@@ -88,8 +88,12 @@
 import { ref, onMounted } from 'vue'
 import { useInventoryStore } from '../../stores/inventory'
 import { apiErrorMessage } from '../../utils/apiError'
+import { useToastStore } from '../../stores/toastStore'
+import { useDialogStore } from '../../stores/dialogStore'
 
 const store = useInventoryStore()
+const toast = useToastStore()
+const dialog = useDialogStore()
 const auditList = ref([])
 
 const fetchData = async () => {
@@ -120,10 +124,10 @@ const calculateDiff = (item) => {
 const applyAudit = async () => {
   const discrepancies = auditList.value.filter(item => item.difference !== 0)
   if (discrepancies.length === 0) {
-    alert('모든 재고가 전산과 일치합니다. 반영할 내역이 없습니다.')
+    toast.addToast('모든 재고가 전산과 일치합니다. 반영할 내역이 없습니다.', 'info')
     return
   }
-  if (!confirm(`총 ${discrepancies.length}건의 불일치 항목이 발견되었습니다.\n실물 재고 기준으로 전산 재고를 강제 조정하시겠습니까?`)) return
+  if (!(await dialog.confirm(`불일치 ${discrepancies.length}건을 실물 재고 기준으로 조정합니다.\n전산 재고가 바뀌고 입출고 기록이 남습니다.`, { title: '실사 결과 반영', okText: '반영' }))) return
 
   let success = 0
   const failures = []
@@ -137,7 +141,8 @@ const applyAudit = async () => {
   }
 
   const summary = `재고 조정 완료 (총 ${success}건 반영)`
-  alert(failures.length ? `${summary}\n\n반영하지 못한 ${failures.length}건:\n${failures.join('\n')}` : summary)
+  if (failures.length) await dialog.alert(`${summary}\n\n반영하지 못한 ${failures.length}건:\n${failures.join('\n')}`, { title: '일부 반영 실패' })
+  else toast.addToast(summary, 'success')
   await fetchData()
 }
 

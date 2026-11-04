@@ -26,7 +26,10 @@
           <div class="text-[80px] font-bold leading-tight">
             <span class="text-primary">{{ activeLine.received_quantity }}</span> / {{ activeLine.order_quantity }}개
           </div>
-          <div class="text-[44px] font-bold text-warning">📍 {{ activeLine.location_name || '위치 미지정' }}에 보관</div>
+          <div class="text-[44px] font-bold text-warning">📍 {{ activeLine.location_name || '위치 미지정' }}에 보관
+            <span v-if="location.isVerified(activeLine)" class="text-success text-4xl">✔ 위치 확인</span>
+          </div>
+          <div v-if="activeLine.location_barcode && !location.isVerified(activeLine)" class="text-2xl text-muted">선반의 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.</div>
         </div>
         <div v-else class="work-task justify-center items-center flex-1 text-[56px] font-bold text-muted">
           상품 바코드를 스캔하세요
@@ -71,9 +74,11 @@ import ScanBox from '../../components/work/ScanBox.vue'
 import QuantityDialog from '../../components/work/QuantityDialog.vue'
 import SerialDialog from '../../components/work/SerialDialog.vue'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
+import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const { ok, fail } = useWorkFeedback()
+const location = useLocationCheck()
 const poList = ref([])
 const po = ref(null)
 const contextSku = ref('')
@@ -127,6 +132,7 @@ watch(isComplete, async (done) => {
 })
 
 const onScan = async (code) => {
+  if (isLocationCode(code)) return location.check(code, activeLine.value, '에 보관합니다')
   const line = po.value.items.find(row => row.item_sku === code)
   if (line) {
     contextSku.value = code
@@ -150,6 +156,7 @@ const enterQuantity = async (quantity) => {
 
 const leave = async () => {
   po.value = null
+  location.reset()
   contextSku.value = ''
   await load()
 }

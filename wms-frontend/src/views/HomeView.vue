@@ -305,9 +305,11 @@ import { downloadCsv } from '../utils/csv';
 import { apiErrorMessage } from '../utils/apiError';
 import { playBeep } from '../utils/beep';
 import Barcode from '../components/Barcode.vue';
+import { useDialogStore } from '../stores/dialogStore';
 
 const store = useInventoryStore();
 const toast = useToastStore();
+const dialog = useDialogStore();
 
 const searchQuery = ref('');
 const selectedLocation = ref('전체');
@@ -375,17 +377,18 @@ const toggleSelectAll = (event) => {
 };
 
 const handleBatchMove = async () => {
-  const codes = store.locations.map(loc => loc.full_code).join(', ');
-  const newLocation = prompt(`이동할 구역 코드를 입력하세요.\n(${codes || '등록된 구역 없음'})`); if (newLocation === null) return;
-  const target = store.locations.find(loc => loc.full_code === newLocation.trim());
-  if (!target) return toast.addToast('등록되지 않은 구역 코드입니다.', 'error');
+  if (store.locations.length === 0) return toast.addToast('등록된 보관 위치가 없습니다. 기본 설정 → 보관 위치에서 먼저 등록하세요.', 'error');
+  const targetId = await dialog.select(`선택한 ${selectedIds.value.length}건을 옮길 보관 위치를 고르세요.`, {
+    title: '일괄 구역이동', okText: '이동', options: store.locations.map(loc => ({ value: loc.id, label: loc.full_code })) });
+  if (targetId === null) return;
+  const target = store.locations.find(loc => loc.id === targetId);
   try {
     await Promise.all(selectedIds.value.map(id => { const targetItem = store.items.find(item => item.id === id); return store.updateItemDetails(id, targetItem.name, target.id); }));
     selectedIds.value = []; toast.addToast('이동 완료', 'success');
   } catch (e) { toast.addToast('이동 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); }
 };
 const handleBatchDelete = async () => {
-  if (!confirm(`선택한 ${selectedIds.value.length}건을 삭제하시겠습니까?`)) return;
+  if (!(await dialog.confirm(`선택한 ${selectedIds.value.length}건을 삭제하시겠습니까?`, { danger: true, okText: '삭제' }))) return;
   try {
     await Promise.all(selectedIds.value.map(id => store.deleteItem(id))); selectedIds.value = []; toast.addToast('삭제 완료', 'success');
   } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); await store.fetchItems(); }
@@ -409,7 +412,7 @@ const handleScan = async () => {
 };
 
 const handleUpdateQuantity = async (item, change) => { try { await store.adjustStock(item.id, change); } catch (e) { toast.addToast(e.response?.data?.error || '재고 변경 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); } };
-const handleDeleteItem = async (id) => { if (!confirm('삭제하시겠습니까?')) return; try { await store.deleteItem(id); toast.addToast('삭제됨', 'success'); } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); } };
+const handleDeleteItem = async (id) => { if (!(await dialog.confirm('이 상품을 삭제하시겠습니까?', { danger: true, okText: '삭제' }))) return; try { await store.deleteItem(id); toast.addToast('삭제됨', 'success'); } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); } };
 onActivated(() => { store.fetchItems(); store.fetchLocations(); });
 </script>
 
