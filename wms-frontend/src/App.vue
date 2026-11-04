@@ -48,9 +48,12 @@
                 @click.stop="tabStore.removeTab(tab.path)">✖</button>
             </div>
           </div>
-          <button
-            class="btn btn-sm mb-1"
-            @click="tabStore.closeAllTabs">전체 닫기</button>
+          <div class="flex gap-1 shrink-0">
+            <NotificationBell />
+            <button
+              class="btn btn-sm mb-1"
+              @click="tabStore.closeAllTabs">전체 닫기</button>
+          </div>
         </div>
       </header>
 
@@ -90,6 +93,7 @@ import { useTabStore } from './stores/tabStore'
 import { useToastStore } from './stores/toastStore'
 import AppDialog from './components/AppDialog.vue'
 import PasswordChangeModal from './components/PasswordChangeModal.vue'
+import NotificationBell from './components/NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()

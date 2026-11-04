@@ -6,6 +6,7 @@ from .views import (
     MasterChangeViewSet,
     DailyCloseAPIView,
     ReceiptIssueReportAPIView,
+    NotificationAPIView,
     StockAgingAPIView,
     ReturnAnalysisAPIView,
     InventoryLogViewSet, 
@@ -43,6 +44,7 @@ urlpatterns = [
     path('reports/workers/', WorkerReportAPIView.as_view(), name='worker-report'),
     path('reports/daily/', DailyCloseAPIView.as_view(), name='daily-close'),
     path('reports/receipt-issues/', ReceiptIssueReportAPIView.as_view(), name='receipt-issues'),
+    path('notifications/', NotificationAPIView.as_view(), name='notifications'),
     path('reports/stock-aging/', StockAgingAPIView.as_view(), name='stock-aging'),
     path('reports/returns/', ReturnAnalysisAPIView.as_view(), name='return-analysis'),
 ]

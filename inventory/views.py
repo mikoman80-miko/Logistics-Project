@@ -30,10 +30,10 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from . import audit, carrier, due, stock
+from . import audit, carrier, due, monitor, stock
 from .audit import AuditMixin
 from .carrier import CarrierError
-from .models import DailyClose, MasterChange, ReceiptIssue, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import AppNotification, DailyClose, MasterChange, NotificationSeen, ReceiptIssue, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -47,8 +47,9 @@ ITEM_TYPES = {value for value, _ in Item.TYPE_CHOICES}
 
 
 # 🌟 NEW: 슬랙/디스코드 웹훅 전송 헬퍼 함수
-def send_webhook_alert(message):
-    # 재고 변경이 저장된 뒤에만 보내고, 주소가 없으면 보내지 않습니다.
+def send_webhook_alert(message, kind='알림', link=''):
+    # 재고 변경이 저장된 뒤에만 화면 안 알림으로 남기고, 주소가 있으면 슬랙·디스코드로도 보냅니다.
+    monitor.record(kind, message, link)
     if not settings.ALERT_WEBHOOK_URL:
         return
 
@@ -261,7 +262,8 @@ def alert_if_low_stock(item):
     incoming = (PurchaseOrderItem.objects.filter(item=item, po__status__in=['발주대기', '입고중'])
                 .aggregate(n=Coalesce(Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity')), 0))['n'])
     plan = f'입고 예정 {incoming}개' if incoming > 0 else '진행 중인 발주 없음 → 발주 관리의 [발주 제안]에서 발주하세요'
-    send_webhook_alert(f"[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}")
+    send_webhook_alert(f"[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}",
+                       kind='재고 부족', link='/purchase-order?suggest=1')
     Item.objects.filter(pk=item.pk).update(low_stock_alerted=True)
     item.low_stock_alerted = True
 
@@ -652,7 +654,7 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
             description = ""
             if 'physicalQty' in self.request.data: # 실사 조정일 경우
                 description = "월말 재고 실사 조정"
-                send_webhook_alert(f"재고 오차 조정 발생: {item.name} ({quantity_diff}개)")
+                send_webhook_alert(f"재고 오차 조정 발생: {item.name} ({quantity_diff}개)", kind='재고 조정', link='/ledger')
             InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user, work='조정')
 
             # 🌟 NEW: 안전 재고 이하로 떨어졌을 때 웹훅 알림 발송
@@ -1915,6 +1917,24 @@ class WorkerReportAPIView(APIView):
         return Response({'start_date': start.isoformat(), 'end_date': end.isoformat(), 'works': WORKS, 'workers': workers, 'daily': daily})
 
 
+class NotificationAPIView(APIView):
+    """화면 안 알림. GET: 최근 30건과 안 읽은 수 / POST: 지금까지 모두 읽음으로 표시. 90일 지난 알림은 지웁니다."""
+    permission_classes = [IsAdminUser]
+    KEEP_DAYS = 90
+
+    def get(self, request):
+        AppNotification.objects.filter(created_at__lt=timezone.now() - timedelta(days=self.KEEP_DAYS)).delete()
+        seen = NotificationSeen.objects.filter(user=request.user).values_list('seen_at', flat=True).first()
+        unread = AppNotification.objects.filter(created_at__gt=seen) if seen else AppNotification.objects.all()
+        items = [{'id': n.id, 'kind': n.kind, 'message': n.message, 'link': n.link, 'unread': not seen or n.created_at > seen,
+                  'created_at': timezone.localtime(n.created_at).isoformat()} for n in AppNotification.objects.all()[:30]]
+        return Response({'unread': unread.count(), 'items': items})
+
+    def post(self, request):
+        NotificationSeen.objects.update_or_create(user=request.user, defaults={'seen_at': timezone.now()})
+        return Response({'unread': 0})
+
+
 class ReceiptIssueReportAPIView(APIView):
     """입고 검수 차이 리포트: 기간(기본 최근 90일) 동안 거래처별 부족·파손·초과와 발주 대비 비율"""
     permission_classes = [IsAdminUser]
@@ -2116,7 +2136,7 @@ class DailyCloseAPIView(APIView):
         note = clean_code(request.data.get('note'))[:200]
         summary = daily_summary(day)
         record, created = DailyClose.objects.update_or_create(date=day, defaults={'summary': summary, 'note': note, 'closed_by': request.user})
-        send_webhook_alert(close_message(day, summary, request.user, note))
+        send_webhook_alert(close_message(day, summary, request.user, note), kind='일일 마감', link='/daily-close')
         return Response({'message': f"{day.isoformat()} {'마감' if created else '다시 마감'} 완료", 'closed': close_payload(record), 'summary': summary})
 
 

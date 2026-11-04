@@ -17,17 +17,26 @@ _last_sent = {}
 _carrier_failures = 0
 
 
-def alert(message, key=None):
-    """알림을 바로 보냅니다. key가 같으면 정해진 시간 안에 다시 보내지 않습니다. 보냈으면 True"""
+def record(kind, message, link=''):
+    """화면 안 알림으로 남깁니다. 진행 중인 트랜잭션이 있으면 저장된 뒤에 남기고, 취소되면 남기지 않습니다."""
+    from django.db import transaction
+
+    from .models import AppNotification
+    transaction.on_commit(lambda: AppNotification.objects.create(kind=kind, message=message[:2000], link=link))
+
+
+def alert(message, key=None, kind='오류', link=''):
+    """화면 안 알림으로 남기고 슬랙·디스코드로도 보냅니다. key가 같으면 정해진 시간 안에 다시 보내지 않습니다. 보냈으면 True"""
     url = settings.ALERT_WEBHOOK_URL
-    if not url:
-        return False
     key = key or message
     now = time.monotonic()
     with _lock:
         if now - _last_sent.get(key, -10 ** 9) < settings.ALERT_REPEAT_MINUTES * 60:
             return False
         _last_sent[key] = now
+    record(kind, message, link)
+    if not url:
+        return True
 
     def post():
         try:
@@ -54,7 +63,7 @@ class AlertLogHandler(logging.Handler):
                 detail = f' · {type(exc).__name__}: {str(exc)[:200]}'
             summary = record.getMessage().splitlines()[0][:200]
             key = f'{record.name}:{summary}:{type(record.exc_info[1]).__name__ if record.exc_info else ""}'
-            alert(f'서버 오류{where}: {summary}{detail} · 자세한 내용은 logs 폴더의 오류 로그를 보세요.', key=key)
+            alert(f'서버 오류{where}: {summary}{detail} · 자세한 내용은 logs 폴더의 오류 로그를 보세요.', key=key, kind='서버 오류')
         except Exception:  # 로그 처리 중 오류로 요청이 실패하지 않게 합니다.
             self.handleError(record)
 
@@ -68,8 +77,8 @@ def carrier_result(ok):
         after = _carrier_failures
     limit = settings.CARRIER_FAIL_ALERT
     if not ok and after == limit:
-        alert(f'택배사 서버 연결이 {limit}번 연속 실패했습니다. 운송장 발급·회수 요청이 쌓이고 있을 수 있습니다.', key='carrier-down')
+        alert(f'택배사 서버 연결이 {limit}번 연속 실패했습니다. 운송장 발급·회수 요청이 쌓이고 있을 수 있습니다.', key='carrier-down', kind='택배', link='/today')
     elif ok and before >= limit:
         with _lock:
             _last_sent.pop('carrier-down', None)
-        alert(f'택배사 서버 연결이 복구되었습니다. (연속 실패 {before}번) 오늘 할 일의 택배 확인 목록을 확인하세요.', key='carrier-up')
+        alert(f'택배사 서버 연결이 복구되었습니다. (연속 실패 {before}번) 오늘 할 일의 택배 확인 목록을 확인하세요.', key='carrier-up', kind='택배', link='/today')

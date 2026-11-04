@@ -337,3 +337,20 @@ class ReceiptIssue(models.Model):
 
     class Meta:
         ordering = ['created_at', 'id']
+
+
+class AppNotification(models.Model):
+    # 화면 안 알림: 슬랙·디스코드로 보내는 알림과 같은 내용을 관리 화면 위쪽 [알림]에서도 봅니다.
+    kind = models.CharField(max_length=20)
+    message = models.TextField()
+    link = models.CharField(max_length=200, blank=True, default='')  # 누르면 열 화면 주소
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+
+class NotificationSeen(models.Model):
+    # 사용자별로 알림을 마지막으로 본 때. 이후에 생긴 알림이 "안 읽음"입니다.
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_seen')
+    seen_at = models.DateTimeField()

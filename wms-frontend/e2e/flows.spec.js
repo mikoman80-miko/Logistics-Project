@@ -724,3 +724,16 @@ test('재고·반품 분석: 재고 일수·장기 재고와 사유별 반품', 
   await expect(admin.locator('.today-card', { hasText: '반품률' })).toContainText('%')
   await shot(admin, '37-return-analysis')
 })
+
+test('화면 안 알림: 앞에서 생긴 알림을 보고, 열면 읽음 처리, 누르면 해당 화면', async () => {
+  await admin.goto('/today')
+  const bell = admin.getByRole('button', { name: /^알림 \d+건$/ })
+  await expect(bell).toHaveAttribute('aria-label', /알림 [1-9]\d*건/)
+  await bell.click()
+  const closeNotice = admin.locator('button', { hasText: '[일일 마감]' }).first()
+  await expect(closeNotice).toBeVisible()
+  await expect(admin.getByRole('button', { name: '알림 0건' })).toBeVisible()
+  await shot(admin, '38-notifications')
+  await closeNotice.click()
+  await expect(admin).toHaveURL(/\/daily-close$/)
+})

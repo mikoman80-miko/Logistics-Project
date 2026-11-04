@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import DailyClose, InventoryLog, Item, MasterChange, ReceiptIssue, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import AppNotification, DailyClose, InventoryLog, Item, MasterChange, ReceiptIssue, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -1689,3 +1689,39 @@ class AnalysisReportTests(BaseCase):
         self.assertEqual(data['by_result'], [{'result': '재고로 되돌림', 'count': 2}])
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.client.get('/api/inventory/reports/returns/').status_code, 403)
+
+
+class NotificationTests(BaseCase):
+    URL = '/api/inventory/notifications/'
+
+    def test_alerts_are_kept_and_marked_seen(self):
+        self.client.force_authenticate(self.admin)
+        Item.objects.filter(pk=self.item.pk).update(quantity=10)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -6}, format='json')  # 4개 → 재고 부족
+        data = self.client.get(self.URL).data
+        self.assertEqual(data['unread'], 1)
+        self.assertEqual((data['items'][0]['kind'], data['items'][0]['link']), ('재고 부족', '/purchase-order?suggest=1'))
+        self.assertTrue(data['items'][0]['unread'])
+        self.assertEqual(self.client.post(self.URL).data['unread'], 0)
+        data = self.client.get(self.URL).data
+        self.assertEqual((data['unread'], data['items'][0]['unread']), (0, False))
+        # 다른 관리자는 아직 안 읽음
+        other = User.objects.create_user('boss2', password='pw-strong-3', is_staff=True)
+        self.client.force_authenticate(other)
+        self.assertEqual(self.client.get(self.URL).data['unread'], 1)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+    def test_rolled_back_change_leaves_no_notice(self):
+        from django.db import transaction
+        from .views import send_webhook_alert
+        with self.captureOnCommitCallbacks(execute=True):
+            try:
+                with transaction.atomic():
+                    send_webhook_alert('취소될 알림')
+                    raise RuntimeError
+            except RuntimeError:
+                pass
+            send_webhook_alert('남는 알림', kind='테스트')
+        self.assertEqual(list(AppNotification.objects.values_list('message', flat=True)), ['남는 알림'])

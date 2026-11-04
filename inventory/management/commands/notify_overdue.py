@@ -21,6 +21,6 @@ class Command(BaseCommand):
         lines = [f"- {po['po_number']} {po['supplier'] or '거래처 미지정'}: 예정일 {po['expected_date']} ({po['days']}일 지남)" for po in overdue['items']]
         more = overdue['count'] - len(overdue['items'])
         message = f"입고 예정일이 지난 발주 {overdue['count']}건\n" + '\n'.join(lines) + (f'\n외 {more}건' if more > 0 else '')
-        send_webhook_alert(message)
+        send_webhook_alert(message, kind='입고 지연', link='/today')
         sent = '보냈습니다' if settings.ALERT_WEBHOOK_URL else '알림 주소(ALERT_WEBHOOK_URL)가 없어 화면에만 표시합니다'
         self.stdout.write(f'{message}\n\n{sent}.')
