@@ -2,7 +2,7 @@
   <div class="flex flex-col h-full">
     <div v-if="isFormOpen" class="modal-overlay">
       <form class="modal w-[720px]" @submit.prevent="submitOrder">
-        <div class="modal-header">출고 주문 등록</div>
+        <div class="modal-header">{{ editingId ? '주문 수정' : '출고 주문 등록' }}</div>
         <div class="modal-content">
           <div v-if="store.items.length === 0" class="alert alert-warning">등록된 상품이 없습니다. 기본 설정 → 상품에서 먼저 등록하세요.</div>
           <div class="toolbar mb-2.5">
@@ -11,14 +11,15 @@
             <label class="field-label ml-2.5">비고</label>
             <input v-model="form.note" class="field flex-1" maxlength="200" />
           </div>
-          <OrderLinesEditor :lines="form.items" :items="store.items" />
+          <div v-if="linesLocked" class="alert alert-warning">스캔을 시작한 주문이라 품목은 바꿀 수 없습니다. 현장 화면에서 [다시 스캔]으로 지운 뒤 수정하세요.</div>
+          <OrderLinesEditor v-else :lines="form.items" :items="store.items" />
           <div class="mt-3 pt-2.5 border-t border-line">
-            <div class="font-bold mb-1.5">배송지 <span class="font-normal text-muted">등록하면 택배사에 운송장 발급을 요청합니다.</span></div>
+            <div class="font-bold mb-1.5">배송지 <span class="font-normal text-muted">{{ editingId ? '배송지를 바꾸면 기존 송장을 취소하고 새로 발급합니다.' : '등록하면 택배사에 운송장 발급을 요청합니다.' }}</span></div>
             <ShippingAddressFields :model="form" />
           </div>
         </div>
         <div class="modal-footer">
-          <button type="submit" class="btn btn-primary btn-lg" :disabled="isSaving">등록</button>
+          <button type="submit" class="btn btn-primary btn-lg" :disabled="isSaving">{{ editingId ? '저장' : '등록' }}</button>
           <button type="button" class="btn btn-lg" @click="isFormOpen = false">닫기</button>
         </div>
       </form>
@@ -47,6 +48,7 @@
           <span class="panel-title">출고 주문 목록</span>
           <div class="flex gap-1">
             <select v-model="statusFilter" class="field field-sm">
+              <option value="">전체</option>
               <option value="출고대기">출고 대기</option>
               <option value="출고완료">출고 완료</option>
               <option value="취소됨">취소됨</option>
@@ -54,6 +56,7 @@
             <button class="btn btn-primary btn-sm" @click="openForm">주문 등록</button>
           </div>
         </div>
+        <ListFilter :model="filter" placeholder="주문번호, 고객, 운송장, 상품" @apply="loadOrders" />
         <div class="panel-body-flush">
           <table class="data-table">
             <thead>
@@ -66,7 +69,7 @@
             </thead>
             <tbody>
               <tr v-if="orders.length === 0" class="empty-row">
-                <td colspan="4">주문이 없습니다. [주문 등록]을 눌러 추가하세요.</td>
+                <td colspan="4">{{ isFiltered ? '조건에 맞는 주문이 없습니다.' : '주문이 없습니다. [주문 등록]을 눌러 추가하세요.' }}</td>
               </tr>
               <tr v-for="order in orders" :key="order.id" class="is-clickable" :class="{ 'is-selected': selected?.id === order.id }" @click="selected = order">
                 <td class="text-center font-bold text-primary">{{ order.order_no }}</td>
@@ -84,6 +87,7 @@
           <span class="panel-title">[{{ selected.order_no }}] {{ selected.customer }} ({{ selected.status }})</span>
           <div v-if="selected.status === '출고대기'" class="flex gap-1">
             <button class="btn btn-success btn-sm" @click="router.push('/work/outbound')">현장 화면에서 출고</button>
+            <button class="btn btn-sm" @click="openEdit">주문 수정</button>
             <button class="btn btn-danger btn-sm" @click="cancelOrder">주문 취소</button>
           </div>
         </div>
@@ -128,18 +132,20 @@
 </template>
 
 <script setup>
-import { onActivated, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onActivated, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useInventoryStore } from '../../stores/inventory'
 import { useToastStore } from '../../stores/toastStore'
 import OrderLinesEditor from '../../components/OrderLinesEditor.vue'
 import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
+import ListFilter from '../../components/ListFilter.vue'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const router = useRouter()
+const route = useRoute()
 const store = useInventoryStore()
 const toast = useToastStore()
 
@@ -152,21 +158,48 @@ const emptyAddress = () => ({ contact_name: '', contact_phone: '', zipcode: '', 
 const form = ref({ customer: '', note: '', items: [], ...emptyAddress() })
 const waybillForm = ref(null)
 const labelOrder = ref(null)
+const filter = ref({ q: '', start_date: '', end_date: '' })
+const isFiltered = computed(() => !!(filter.value.q || filter.value.start_date || filter.value.end_date))
+const editingId = ref(null)
+const linesLocked = ref(false)
 
 const loadOrders = async () => {
-  orders.value = await store.fetchOrders(statusFilter.value)
+  orders.value = await store.fetchOrders({ status: statusFilter.value, ...filter.value })
   if (selected.value) selected.value = orders.value.find(o => o.id === selected.value.id) || null
 }
 
 const openForm = async () => {
   await store.fetchItems()
   form.value = { customer: '', note: '', items: [{ item: null, quantity: 1 }], ...emptyAddress() }
+  editingId.value = null
+  linesLocked.value = false
   isFormOpen.value = true
+}
+
+const openEdit = async () => {
+  await store.fetchItems()
+  const order = selected.value
+  const { customer, note, contact_name, contact_phone, zipcode, address, address_detail } = order
+  form.value = { customer, note, contact_name, contact_phone, zipcode, address, address_detail,
+    items: order.items.map(line => ({ item: line.item, quantity: line.quantity })) }
+  editingId.value = order.id
+  linesLocked.value = order.items.some(line => line.picked_quantity > 0)
+  isFormOpen.value = true
+}
+
+const submitEdit = async () => {
+  const { items, ...fields } = form.value
+  const body = linesLocked.value ? fields : { ...fields, items }
+  const res = await axios.post(`/api/inventory/orders/${editingId.value}/edit/`, body)
+  applyOrder(res.data.order)
+  toast.addToast(res.data.message, res.data.order.carrier_error ? 'error' : 'success', 6000)
+  isFormOpen.value = false
 }
 
 const submitOrder = async () => {
   isSaving.value = true
   try {
+    if (editingId.value) return await submitEdit()
     const created = await store.createOrder(form.value)
     if (created.carrier_error) toast.addToast(`주문 ${created.order_no} 등록 완료. 운송장 발급 실패: ${created.carrier_error}`, 'error', 7000)
     else toast.addToast(`주문 ${created.order_no} 등록 완료${created.waybill_no ? ` (운송장 ${created.waybill_no})` : ''}`, 'success')
@@ -174,7 +207,7 @@ const submitOrder = async () => {
     statusFilter.value = '출고대기'
     await loadOrders()
   } catch (err) {
-    toast.addToast(apiErrorMessage(err, '주문 등록 중 오류가 발생했습니다.'), 'error', 5000)
+    toast.addToast(apiErrorMessage(err, editingId.value ? '주문 수정 중 오류가 발생했습니다.' : '주문 등록 중 오류가 발생했습니다.'), 'error', 5000)
   } finally {
     isSaving.value = false
   }
@@ -231,10 +264,24 @@ const cancelOrder = async () => {
   }
 }
 
+let keepSelection = false
 watch(statusFilter, () => {
+  if (keepSelection) return (keepSelection = false)  // 아래 onActivated가 직접 조회합니다.
   selected.value = null
   loadOrders()
 })
 
-onActivated(loadOrders)
+// 다른 화면에서 /orders?q=주문번호 로 들어오면 그 주문을 찾아 엽니다.
+onActivated(async () => {
+  const q = route.query.q
+  if (!q) return loadOrders()
+  filter.value = { q, start_date: '', end_date: '' }
+  router.replace({ query: {} })
+  if (statusFilter.value) {
+    keepSelection = true
+    statusFilter.value = ''
+  }
+  await loadOrders()
+  if (orders.value.length === 1) selected.value = orders.value[0]
+})
 </script>

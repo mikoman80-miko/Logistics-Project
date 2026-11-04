@@ -57,6 +57,7 @@
         <span class="panel-title">반품 목록</span>
         <div class="flex gap-1">
           <select v-model="statusFilter" class="field field-sm">
+            <option value="">전체</option>
             <option value="회수대기">회수 대기</option>
             <option value="회수완료">회수 완료</option>
             <option value="취소됨">취소됨</option>
@@ -65,6 +66,7 @@
           <button class="btn btn-success btn-sm" @click="router.push('/work/return')">현장 화면에서 회수</button>
         </div>
       </div>
+      <ListFilter :model="filter" placeholder="반품번호, 고객, 시리얼, 운송장, 상품" @apply="load" />
       <div class="panel-body-flush">
         <table class="data-table">
           <thead>
@@ -81,7 +83,7 @@
           </thead>
           <tbody>
             <tr v-if="returns.length === 0" class="empty-row">
-              <td colspan="8">반품이 없습니다. 고객이 반품을 요청하면 [반품 등록]을 누르세요.</td>
+              <td colspan="8">{{ filter.q || filter.start_date || filter.end_date ? '조건에 맞는 반품이 없습니다.' : '반품이 없습니다. 고객이 반품을 요청하면 [반품 등록]을 누르세요.' }}</td>
             </tr>
             <tr v-for="row in returns" :key="row.id">
               <td class="text-center font-bold text-primary">{{ row.return_no }}</td>
@@ -108,22 +110,25 @@
 
 <script setup>
 import { computed, onActivated, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useInventoryStore } from '../../stores/inventory'
 import { useToastStore } from '../../stores/toastStore'
 import { apiErrorMessage } from '../../utils/apiError'
 import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
+import ListFilter from '../../components/ListFilter.vue'
 import axios from 'axios'
 
 const RETURN_REASONS = ['단순변심', '전원불량', '액정파손', '기타']
 
 const router = useRouter()
+const route = useRoute()
 const store = useInventoryStore()
 const toast = useToastStore()
 
 const returns = ref([])
 const statusFilter = ref('회수대기')
+const filter = ref({ q: '', start_date: '', end_date: '' })
 const isFormOpen = ref(false)
 const isSaving = ref(false)
 const emptyAddress = () => ({ contact_name: '', contact_phone: '', zipcode: '', address: '', address_detail: '' })
@@ -133,7 +138,7 @@ const pickupForm = ref(emptyAddress())
 const shippedSerials = computed(() => store.serials.filter(s => s.status === '출고완료'))
 
 const load = async () => {
-  returns.value = await store.fetchReturns(statusFilter.value)
+  returns.value = await store.fetchReturns({ status: statusFilter.value, ...filter.value })
 }
 
 const openForm = async () => {
@@ -199,5 +204,15 @@ const cancelReturn = async (row) => {
 
 watch(statusFilter, load)
 
-onActivated(load)
+// 다른 화면에서 /returns?q=반품번호 로 들어오면 그 반품을 찾아 상세를 엽니다.
+onActivated(async () => {
+  const q = route.query.q
+  if (q) {
+    filter.value = { q, start_date: '', end_date: '' }
+    router.replace({ query: {} })
+    statusFilter.value = ''
+  }
+  await load()
+  if (q && returns.value.length === 1) openDetail(returns.value[0])
+})
 </script>

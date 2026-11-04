@@ -242,3 +242,26 @@ class CarrierPagesTests(CarrierCase):
         self.assertEqual(self.page('/').status_code, 200)
         self.assertEqual(self.page('/webhooks').status_code, 200)
         self.assertIn('/v1/shipments', self.page('/docs').text)
+
+
+class OrderEditCarrierTests(CarrierCase):
+    def test_address_change_reissues_waybill(self):
+        order = SalesOrder.objects.get(pk=self.create_order().data['id'])
+        old = order.waybill_no
+        res = self.client.post(f'{ORDERS}{order.id}/edit/', {'address': '서울시 중구 세종대로 110'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        new = res.data['order']['waybill_no']
+        self.assertTrue(new and new != old)
+        self.assertEqual([e['status'] for e in res.data['order']['carrier_events']], ['접수'])
+        old_status = requests.get(f'{self.url}/v1/shipments/{old}', headers={'X-API-Key': API_KEY}, timeout=5).json()['data']['status']
+        self.assertEqual(old_status, '취소')
+        # 배송지를 그대로 두면 운송장도 그대로입니다.
+        res = self.client.post(f'{ORDERS}{order.id}/edit/', {'note': '문 앞'}, format='json')
+        self.assertEqual(res.data['order']['waybill_no'], new)
+
+    def test_today_lists_carrier_issues(self):
+        self.create_order(**{**ADDRESS, 'address': '없는주소 1번지'})
+        res = self.client.get('/api/inventory/today/')
+        issues = res.data['carrier_issues']
+        self.assertEqual(issues['count'], 1)
+        self.assertIn('주소를 확인할 수 없습니다', issues['items'][0]['reason'])

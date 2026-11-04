@@ -753,3 +753,69 @@ class LogUserAndSerialAuditTests(BaseCase):
         self.assertEqual(self.client.patch(url, {'quantity': 1, 'physicalQty': 1}, format='json').status_code, 400)
         self.assertEqual(self.client.patch(url, {'quantity': 2, 'physicalQty': 2}, format='json').status_code, 200)
         self.assertEqual(self.client.patch(url, {'quantity': 4, 'physicalQty': 4}, format='json').status_code, 200)
+
+
+class DocumentFilterTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        supplier = Supplier.objects.create(name='미래전자')
+        self.po_old = PurchaseOrder.objects.create(po_number='PO-OLD', supplier=supplier)
+        PurchaseOrder.objects.filter(pk=self.po_old.pk).update(order_date=timezone.localdate() - timedelta(days=40))
+        self.po_new = PurchaseOrder.objects.create(po_number='PO-NEW')
+        PurchaseOrderItem.objects.create(po=self.po_new, item=self.item, order_quantity=1)
+        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='가온유통', waybill_no='581111111111')
+        SalesOrderItem.objects.create(order=self.order, item=self.other, quantity=1)
+        SalesOrder.objects.create(order_no='ORD-2', customer='나래상사', status='출고완료')
+
+    def numbers(self, url, **params):
+        res = self.client.get(url, params)
+        self.assertEqual(res.status_code, 200, res.data)
+        return sorted(row.get('po_number') or row.get('order_no') for row in res.data)
+
+    def test_search_by_number_partner_and_item(self):
+        self.assertEqual(self.numbers(POS, q='미래'), ['PO-OLD'])
+        self.assertEqual(self.numbers(POS, q='상품A'), ['PO-NEW'])
+        self.assertEqual(self.numbers(ORDERS, q='5811111'), ['ORD-1'])
+        self.assertEqual(self.numbers(ORDERS, q='B-1'), ['ORD-1'])
+        self.assertEqual(self.numbers(ORDERS, q='나래'), ['ORD-2'])
+        self.assertEqual(self.numbers(ORDERS, q='나래', status='출고대기'), [])
+
+    def test_date_range(self):
+        today = timezone.localdate().isoformat()
+        self.assertEqual(self.numbers(POS, start_date=today), ['PO-NEW'])
+        self.assertEqual(self.numbers(POS, end_date=(timezone.localdate() - timedelta(days=30)).isoformat()), ['PO-OLD'])
+        self.assertEqual(self.numbers(ORDERS, start_date=today, end_date=today), ['ORD-1', 'ORD-2'])
+        self.assertEqual(self.client.get(ORDERS, {'start_date': '2026-12-01', 'end_date': '2026-11-01'}).status_code, 400)
+        self.assertEqual(self.client.get(ORDERS, {'start_date': 'bad'}).status_code, 400)
+
+
+class OrderEditTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='고객')
+        self.line = SalesOrderItem.objects.create(order=self.order, item=self.item, quantity=1)
+
+    def edit(self, **data):
+        return self.client.post(f'{ORDERS}{self.order.id}/edit/', data, format='json')
+
+    def test_edit_fields_and_lines(self):
+        res = self.edit(customer='새고객', note='메모', items=[{'item': self.other.id, 'quantity': 2}])
+        self.assertEqual(res.status_code, 200, res.data)
+        self.order.refresh_from_db()
+        self.assertEqual((self.order.customer, self.order.note), ('새고객', '메모'))
+        self.assertEqual([(l.item_id, l.quantity) for l in self.order.items.all()], [(self.other.id, 2)])
+        self.assertEqual(self.edit(items=[{'item': self.other.id}]).status_code, 400)
+        self.assertEqual(self.edit(items=[]).status_code, 400)
+
+    def test_scanned_or_shipped_order_is_locked(self):
+        SalesOrderItem.objects.filter(pk=self.line.pk).update(picked_quantity=1)
+        self.assertEqual(self.edit(items=[{'item': self.other.id, 'quantity': 1}]).status_code, 400)
+        self.assertEqual(self.edit(note='메모만').status_code, 200)
+        SalesOrder.objects.filter(pk=self.order.pk).update(status='출고완료')
+        self.assertEqual(self.edit(note='x').status_code, 400)
+
+    def test_worker_cannot_edit(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.edit(note='x').status_code, 403)

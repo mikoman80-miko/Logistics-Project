@@ -42,8 +42,11 @@ export const useInventoryStore = defineStore('inventory', () => {
     await fetchItems()
   }
 
-  const fetchOrders = async (status) => {
-    const response = await axios.get('/api/inventory/orders/', { params: status ? { status } : {} })
+  // params: { status, q, start_date, end_date } 중 값이 있는 것만 보냅니다.
+  const listParams = (params = {}) => Object.fromEntries(Object.entries(params).filter(([, value]) => value))
+
+  const fetchOrders = async (params) => {
+    const response = await axios.get('/api/inventory/orders/', { params: listParams(params) })
     return response.data
   }
 
@@ -57,8 +60,8 @@ export const useInventoryStore = defineStore('inventory', () => {
     return response.data
   }
 
-  const fetchReturns = async (status) => {
-    const response = await axios.get('/api/inventory/returns/', { params: status ? { status } : {} })
+  const fetchReturns = async (params) => {
+    const response = await axios.get('/api/inventory/returns/', { params: listParams(params) })
     return response.data
   }
 

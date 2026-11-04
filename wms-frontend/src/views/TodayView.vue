@@ -19,6 +19,31 @@
       </button>
     </div>
 
+    <div v-if="today.carrier_issues.count > 0" class="panel">
+      <div class="panel-header">
+        <span class="panel-title text-danger">택배 확인 필요 {{ today.carrier_issues.count }}건</span>
+        <span class="text-muted">운송장 발급·회수 요청 실패, 출고 후 하루 넘게 배송완료가 안 된 건</span>
+      </div>
+      <div class="panel-body-flush">
+        <table class="data-table">
+          <thead>
+            <tr><th width="70">구분</th><th width="180">번호</th><th width="180">고객</th><th>확인할 내용</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="issue in today.carrier_issues.items" :key="issue.kind + issue.number" class="is-clickable" @click="openIssue(issue)">
+              <td class="text-center">{{ issue.kind === 'order' ? '주문' : '반품' }}</td>
+              <td class="text-center font-bold text-primary">{{ issue.number }}</td>
+              <td class="truncate">{{ issue.customer }}</td>
+              <td class="truncate text-danger" :title="issue.reason">{{ issue.reason }}</td>
+            </tr>
+            <tr v-if="today.carrier_issues.count > today.carrier_issues.items.length" class="empty-row">
+              <td colspan="4">외 {{ today.carrier_issues.count - today.carrier_issues.items.length }}건은 주문·반품 관리에서 확인하세요.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="panel-header"><span class="panel-title">업무 흐름</span></div>
       <div class="panel-body grid grid-cols-1 lg:grid-cols-3 gap-2.5">
@@ -44,7 +69,7 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, setup: { locations: true, items: true, suppliers: true } })
+const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
 
 const cards = [
   { title: '출고 대기', count: () => today.value.orders, hint: '스캔 후 출고할 주문', path: '/orders', color: 'text-primary' },
@@ -64,6 +89,9 @@ const flows = [
   { title: '출고', steps: ['관리자가 주문을 등록합니다.', '현장 화면의 안내대로 스캔합니다.', '출고 완료를 누르면 재고가 줄어듭니다.'], path: '/orders', action: '주문 관리로 이동' },
   { title: '반품', steps: ['관리자가 반품을 등록합니다.', '현장 화면에서 시리얼을 스캔합니다.', '기기 상태를 고르면 처리됩니다.'], path: '/returns', action: '반품 관리로 이동' },
 ]
+
+// 해당 주문·반품 화면에서 그 건을 찾아 엽니다.
+const openIssue = (issue) => router.push({ path: issue.kind === 'order' ? '/orders' : '/returns', query: { q: issue.number } })
 
 onActivated(async () => {
   today.value = (await axios.get('/api/inventory/today/')).data

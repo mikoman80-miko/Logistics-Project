@@ -52,10 +52,18 @@
         <div class="panel-header">
           <span class="panel-title">발주서 목록</span>
           <div class="flex gap-1">
+            <select v-model="statusFilter" class="field field-sm">
+              <option value="">전체</option>
+              <option value="발주대기">발주 대기</option>
+              <option value="입고중">입고중</option>
+              <option value="입고완료">입고 완료</option>
+              <option value="취소됨">취소됨</option>
+            </select>
             <button class="btn btn-primary btn-sm" @click="openForm">발주 등록</button>
             <button class="btn btn-sm" @click="fetchPOs">새로고침</button>
           </div>
         </div>
+        <ListFilter :model="filter" placeholder="발주번호, 거래처, 상품" @apply="fetchPOs" />
         <div class="panel-body-flush">
           <table class="data-table">
             <thead>
@@ -67,7 +75,7 @@
             </thead>
             <tbody>
               <tr v-if="poList.length === 0" class="empty-row">
-                <td colspan="3">발주서가 없습니다. [발주 등록]을 눌러 추가하세요.</td>
+                <td colspan="3">{{ filter.q || filter.start_date || filter.end_date || statusFilter ? '조건에 맞는 발주서가 없습니다.' : '발주서가 없습니다. [발주 등록]을 눌러 추가하세요.' }}</td>
               </tr>
               <tr v-for="po in poList" :key="po.id" class="is-clickable" :class="{ 'is-selected': selected?.id === po.id }" @click="selected = po">
                 <td class="text-center text-primary font-bold">{{ po.po_number }}</td>
@@ -122,12 +130,13 @@
 </template>
 
 <script setup>
-import { computed, onActivated, ref } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { useToastStore } from '../../stores/toastStore'
 import { useInventoryStore } from '../../stores/inventory'
 import OrderLinesEditor from '../../components/OrderLinesEditor.vue'
+import ListFilter from '../../components/ListFilter.vue'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const router = useRouter()
@@ -135,6 +144,8 @@ const toast = useToastStore()
 const store = useInventoryStore()
 
 const poList = ref([])
+const statusFilter = ref('')
+const filter = ref({ q: '', start_date: '', end_date: '' })
 const selected = ref(null)
 const isFormOpen = ref(false)
 const isSaving = ref(false)
@@ -145,7 +156,8 @@ const activeSuppliers = computed(() => suppliers.value.filter(s => s.is_active))
 const statusClass = (status) => ({ 입고완료: 'text-success', 입고중: 'text-primary', 발주대기: 'text-warning' }[status] || 'text-muted')
 
 const fetchPOs = async () => {
-  const res = await axios.get('/api/inventory/purchase-orders/')
+  const params = Object.fromEntries(Object.entries({ status: statusFilter.value, ...filter.value }).filter(([, value]) => value))
+  const res = await axios.get('/api/inventory/purchase-orders/', { params })
   poList.value = res.data
   if (selected.value) selected.value = poList.value.find(p => p.id === selected.value.id) || null
 }
@@ -220,6 +232,8 @@ const cancelPO = async () => {
     toast.addToast(apiErrorMessage(err, '발주서 취소 중 오류가 발생했습니다.'), 'error', 5000)
   }
 }
+
+watch(statusFilter, fetchPOs)
 
 onActivated(fetchPOs)
 </script>

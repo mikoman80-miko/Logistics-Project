@@ -114,6 +114,27 @@ def update_shipping_address(record, serializer_class, data):
         serializer.save()
 
 
+def filter_documents(queryset, params, date_field, search_fields, date_only=False):
+    """발주·주문·반품 목록 공통 조건: 상태, 검색어(q), 등록일 기간(start_date ~ end_date)."""
+    status_value = params.get('status')
+    if status_value:
+        queryset = queryset.filter(status=status_value)
+    keyword = (params.get('q') or '').strip()
+    if keyword:
+        condition = Q()
+        for field in search_fields:
+            condition |= Q(**{f'{field}__icontains': keyword})
+        queryset = queryset.filter(condition).distinct()
+    start, end = parse_date_param(params.get('start_date')), parse_date_param(params.get('end_date'))
+    if start and end and start > end:
+        raise ValidationError({'error': '시작일이 종료일보다 늦습니다.'})
+    if start:
+        queryset = queryset.filter(**{f'{date_field}__gte': start if date_only else day_start(start)})
+    if end:
+        queryset = queryset.filter(**({f'{date_field}__lte': end} if date_only else {f'{date_field}__lt': day_start(end + timedelta(days=1))}))
+    return queryset
+
+
 def error_response(message, http_status=status.HTTP_400_BAD_REQUEST):
     return Response({'error': message}, status=http_status)
 
@@ -498,6 +519,10 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     # 입고 이력과 어긋나지 않도록 등록 후에는 수정, 삭제 대신 취소만 허용합니다.
     http_method_names = ['get', 'post', 'head', 'options']
 
+    def get_queryset(self):
+        return filter_documents(super().get_queryset(), self.request.query_params, 'order_date',
+                                ['po_number', 'supplier__name', 'items__item__sku', 'items__item__name'], date_only=True)
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         po = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
@@ -624,9 +649,8 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        order_status = self.request.query_params.get('status')
-        return queryset.filter(status=order_status) if order_status else queryset
+        return filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
+                                ['order_no', 'customer', 'contact_name', 'waybill_no', 'items__item__sku', 'items__item__name'])
 
     def perform_create(self, serializer):
         order = serializer.save(created_by=self.request.user)
@@ -634,6 +658,47 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
 
     def _order_response(self, order, message=''):
         return Response({'message': message, 'order': self.get_serializer(self.get_queryset().get(pk=order.pk)).data})
+
+    @action(detail=True, methods=['post'])
+    def edit(self, request, pk=None):
+        # 출고대기 주문의 고객, 비고, 배송지, 품목을 고칩니다. 배송지가 바뀌면 운송장을 새로 발급합니다.
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if order.status != '출고대기':
+            return error_response(f'{order.status} 상태의 주문은 수정할 수 없습니다.')
+        if 'items' in request.data and order.items.filter(picked_quantity__gt=0).exists():
+            return error_response('스캔을 시작한 주문은 품목을 바꿀 수 없습니다. 현장 화면에서 [다시 스캔]으로 지운 뒤 수정해 주세요.')
+
+        serializer = self.get_serializer(order, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        changes = dict(serializer.validated_data)
+        lines = changes.pop('items', None)
+        if lines is not None and any('item' not in line or 'quantity' not in line for line in lines):
+            return error_response('품목마다 상품과 수량을 입력해주세요.')
+        old_address = [getattr(order, key) for key in SHIPPING_FIELDS]
+        for key, value in changes.items():
+            setattr(order, key, value)
+        address_changed = old_address != [getattr(order, key) for key in SHIPPING_FIELDS]
+        if carrier.enabled() and not order.has_address:
+            return error_response('택배 발송에 필요한 이름, 연락처, 우편번호, 주소를 모두 입력해주세요.')
+
+        if address_changed and order.waybill_no:
+            error = cancel_carrier(order, pickup=False)
+            if error:
+                return error_response(f'{error} 배송지를 바꾸려면 기존 송장을 먼저 취소해야 합니다.')
+            order.carrier_events.all().delete()  # 취소한 송장의 이력은 새 송장과 섞이지 않게 지웁니다.
+            order.waybill_no, order.carrier_status = '', ''
+        order.save()
+        if lines is not None:
+            order.items.all().delete()
+            SalesOrderItem.objects.bulk_create([SalesOrderItem(order=order, **line) for line in lines])
+        request_carrier(order, carrier.create_shipment)
+
+        message = f'주문 {order.order_no} 수정 완료'
+        if address_changed and order.waybill_no:
+            message += f' (새 운송장 {order.waybill_no})'
+        elif order.carrier_error:
+            message += f'. 운송장 발급 실패: {order.carrier_error}'
+        return self._order_response(order, message)
 
     @action(detail=True, methods=['post'])
     def issue_waybill(self, request, pk=None):
@@ -806,9 +871,8 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        return_status = self.request.query_params.get('status')
-        return queryset.filter(status=return_status) if return_status else queryset
+        return filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
+                                ['return_no', 'customer', 'contact_name', 'waybill_no', 'serial__serial_number', 'serial__item__name'])
 
     def perform_create(self, serializer):
         return_order = serializer.save(created_by=self.request.user)
@@ -991,6 +1055,35 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+STALLED_HOURS = 24  # 출고 후 이 시간이 지나도 배송완료가 아니면 확인이 필요합니다.
+
+
+def carrier_issues(limit=10):
+    """택배 연동에서 사람이 확인해야 할 주문·반품: 요청 실패, 운송장 없음, 오래 멈춘 배송"""
+    if not carrier.enabled():
+        return {'count': 0, 'items': []}
+    stalled_before = timezone.now() - timedelta(hours=STALLED_HOURS)
+    orders = SalesOrder.objects.filter(
+        Q(status='출고대기', waybill_no='')
+        | Q(status__in=['출고대기', '출고완료']) & ~Q(carrier_error='')
+        | Q(status='출고완료', completed_at__lt=stalled_before) & ~Q(waybill_no='') & ~Q(carrier_status__in=['배송완료', '취소'])
+    ).order_by('-created_at')
+    returns = ReturnOrder.objects.filter(status='회수대기').filter(Q(waybill_no='') | ~Q(carrier_error='')).order_by('-created_at')
+
+    def order_reason(order):
+        if order.carrier_error:
+            return order.carrier_error
+        if not order.waybill_no:
+            return '운송장 미발급'
+        hours = int((timezone.now() - order.completed_at).total_seconds() // 3600)
+        return f'출고 후 {hours}시간째 {order.carrier_status or "상태 미확인"}'
+
+    items = [{'kind': 'order', 'number': o.order_no, 'customer': o.customer, 'reason': order_reason(o)} for o in orders[:limit]]
+    items += [{'kind': 'return', 'number': r.return_no, 'customer': r.customer, 'reason': r.carrier_error or '회수 요청 안 됨'}
+              for r in returns[:max(0, limit - len(items))]]
+    return {'count': orders.count() + returns.count(), 'items': items}
+
+
 class TodayAPIView(APIView):
     # 첫 화면에 보여줄 오늘 할 일과 처음 설정 진행 상태
     permission_classes = [IsAuthenticated]
@@ -998,6 +1091,7 @@ class TodayAPIView(APIView):
     def get(self, request):
         low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).count()
         return Response({
+            'carrier_issues': carrier_issues(),
             'orders': SalesOrder.objects.filter(status='출고대기').count(),
             'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
