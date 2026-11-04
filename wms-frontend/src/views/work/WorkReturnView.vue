@@ -33,6 +33,9 @@
           <div class="font-bold truncate">{{ row.item_name }}</div>
           <div class="mt-1 text-xl text-muted font-mono truncate">{{ row.serial_number }}</div>
           <div class="text-xl text-muted">{{ row.customer }} · {{ row.reason }}</div>
+          <div v-if="row.carrier_status" class="text-xl font-bold" :class="row.carrier_status === '회수완료' ? 'text-success' : 'text-primary'">
+            택배 {{ row.carrier_status === '회수완료' ? '회수완료 (창고 도착)' : row.carrier_status }}
+          </div>
         </div>
       </aside>
     </div>

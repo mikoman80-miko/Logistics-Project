@@ -41,7 +41,7 @@
                 width="100">카테고리</th>
               <th
                
-                width="100">보관 보관 위치</th>
+                width="100">보관 위치</th>
               <th
                
                 width="90">기초재고</th>
@@ -88,7 +88,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onActivated, onMounted } from 'vue';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 
@@ -124,7 +124,7 @@ const exportExcel = () => {
     '상품코드': row.sku,
     '상품명': row.name,
     '카테고리': row.category_name,
-    '보관 보관 위치': row.location,
+    '보관 위치': row.location,
     '기초재고': row.opening_qty,
     '당기입고': row.inbound_qty,
     '당기출고': row.outbound_qty,
@@ -137,9 +137,8 @@ const exportExcel = () => {
   XLSX.writeFile(workbook, `재고수불부_${startDate.value}_to_${endDate.value}.xlsx`);
 };
 
-onMounted(() => {
-  initDates();
-  fetchLedger();
-});
+// 다른 탭에서 입출고한 뒤 돌아와도 최신 수치를 보여줍니다.
+onMounted(initDates);
+onActivated(fetchLedger);
 </script>
 <!-- CSS 삭제됨 -->

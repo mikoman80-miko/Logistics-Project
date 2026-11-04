@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -17,6 +18,8 @@ RETURNS = '/api/inventory/returns/'
 LOGS = '/api/inventory/logs/'
 
 
+# 개발 PC의 .env에 택배사 주소가 있어도, 기본 테스트는 택배 연동 없이 실행합니다.
+@override_settings(CARRIER_API_URL='')
 class BaseCase(APITestCase):
     def setUp(self):
         self.admin = User.objects.create_user('boss', password='pw-strong-1', is_staff=True)
@@ -623,3 +626,130 @@ class TodayTests(BaseCase):
         res = self.client.get('/api/inventory/today/')
         self.assertEqual((res.data['orders'], res.data['purchase_orders'], res.data['returns'], res.data['low_stock']), (1, 1, 0, 2))
         self.assertEqual(res.data['setup'], {'locations': False, 'items': True, 'suppliers': False})
+
+
+class MasterDataEditTests(BaseCase):
+    LOCATIONS = '/api/inventory/locations/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_edit_item_keeps_stock_and_sets_safety_stock(self):
+        res = self.client.patch(f'{ITEMS}{self.item.id}/', {'name': '새이름', 'safety_stock': 2}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.item.refresh_from_db()
+        self.assertEqual((self.item.name, self.item.safety_stock, self.item.quantity), ('새이름', 2, 5))
+        self.assertFalse(InventoryLog.objects.filter(item=self.item).exists())
+        self.assertEqual(self.client.patch(f'{ITEMS}{self.item.id}/', {'safety_stock': -1}, format='json').status_code, 400)
+
+    def test_edit_supplier(self):
+        supplier = Supplier.objects.create(name='옛거래처')
+        res = self.client.patch(f'/api/inventory/suppliers/{supplier.id}/', {'name': '새거래처', 'email': 'a@example.com'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        supplier.refresh_from_db()
+        self.assertEqual((supplier.name, supplier.email), ('새거래처', 'a@example.com'))
+
+    def test_location_code_must_be_unique(self):
+        self.assertEqual(self.client.post(self.LOCATIONS, {'zone': 'A', 'rack': 'R1', 'tier': 1}).status_code, 201)
+        res = self.client.post(self.LOCATIONS, {'zone': ' A ', 'rack': 'R1', 'tier': 1, 'cell': ''})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('A-R1-1단', res.data['error'][0])
+        self.assertEqual(self.client.post(self.LOCATIONS, {'zone': 'A', 'rack': 'R1', 'tier': 1, 'cell': 'C1'}).status_code, 201)
+
+    def test_edit_location_allows_itself_but_not_duplicate(self):
+        a = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        WarehouseLocation.objects.create(zone='A', rack='R1', tier=2)
+        self.assertEqual(self.client.patch(f'{self.LOCATIONS}{a.id}/', {'description': '메모'}, format='json').status_code, 200)
+        self.assertEqual(self.client.patch(f'{self.LOCATIONS}{a.id}/', {'tier': 2}, format='json').status_code, 400)
+
+    def test_location_with_stock_cannot_be_deleted(self):
+        loc = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        Item.objects.filter(pk=self.item.pk).update(location=loc)
+        self.assertEqual(self.client.delete(f'{self.LOCATIONS}{loc.id}/').status_code, 400)
+        Item.objects.filter(pk=self.item.pk).update(location=None)
+        self.assertEqual(self.client.delete(f'{self.LOCATIONS}{loc.id}/').status_code, 204)
+
+
+class ReceiptCancelTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=0)
+        self.po = PurchaseOrder.objects.create(po_number='PO-1')
+        PurchaseOrderItem.objects.create(po=self.po, item=self.product, order_quantity=1)
+        PurchaseOrderItem.objects.create(po=self.po, item=self.item, order_quantity=3)
+        self.client.force_authenticate(self.worker)
+
+    def receive(self, **data):
+        return self.client.post(f'{POS}{self.po.id}/receive_inbound/', data, format='json')
+
+    def cancel(self, **data):
+        return self.client.post(f'{POS}{self.po.id}/cancel_receipt/', data, format='json')
+
+    def test_worker_cancels_serial_receipt_even_after_po_completed(self):
+        self.receive(sku='P-1', serial_number='SN1')
+        self.receive(sku='A-1', quantity=3)
+        self.assertEqual(PurchaseOrder.objects.get(pk=self.po.pk).status, '입고완료')
+        res = self.cancel(sku='P-1', serial_number='SN1')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['status'], '입고중')
+        self.assertFalse(ItemSerial.objects.filter(serial_number='SN1').exists())
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.quantity, 0)
+        log = InventoryLog.objects.filter(item=self.product).latest('id')
+        self.assertEqual((log.quantity_changed, log.user, log.description), (-1, self.worker, '발주번호 PO-1 입고 취소 S/N SN1'))
+        # 같은 시리얼을 다시 입고할 수 있습니다.
+        self.assertEqual(self.receive(sku='P-1', serial_number='SN1').status_code, 200)
+
+    def test_quantity_cancel_returns_po_to_waiting(self):
+        self.receive(sku='A-1', quantity=2)
+        self.assertEqual(self.cancel(sku='A-1', quantity=3).status_code, 400)
+        res = self.cancel(sku='A-1', quantity=2)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['status'], '발주대기')
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)
+
+    def test_rejects_serial_from_elsewhere_or_already_shipped(self):
+        ItemSerial.objects.create(item=self.product, serial_number='OTHER')
+        self.receive(sku='P-1', serial_number='SN1')
+        self.assertEqual(self.cancel(sku='P-1', serial_number='OTHER').status_code, 400)
+        ItemSerial.objects.filter(serial_number='SN1').update(status='출고완료')
+        self.assertEqual(self.cancel(sku='P-1', serial_number='SN1').status_code, 400)
+        self.assertEqual(self.cancel(sku='P-1').status_code, 400)
+
+    def test_legacy_serial_found_by_receipt_log(self):
+        self.receive(sku='P-1', serial_number='SN1')
+        ItemSerial.objects.filter(serial_number='SN1').update(po_item=None)
+        self.assertEqual(self.cancel(sku='P-1', serial_number='SN1').status_code, 200)
+
+    def test_cannot_cancel_more_than_stock(self):
+        self.receive(sku='A-1', quantity=3)
+        Item.objects.filter(pk=self.item.pk).update(quantity=1)
+        self.assertEqual(self.cancel(sku='A-1', quantity=2).status_code, 400)
+
+    def test_po_lists_received_serials(self):
+        self.receive(sku='P-1', serial_number='SN1')
+        self.client.force_authenticate(self.admin)
+        line = next(l for l in self.client.get(f'{POS}{self.po.id}/').data['items'] if l['item_sku'] == 'P-1')
+        self.assertEqual(line['received_serials'], ['SN1'])
+
+
+class LogUserAndSerialAuditTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=3)
+        ItemSerial.objects.create(item=self.product, serial_number='SN1')
+        ItemSerial.objects.create(item=self.product, serial_number='SN2')
+
+    def test_log_records_user(self):
+        self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 1}, format='json')
+        self.assertEqual(self.client.get(LOGS).data['results'][0]['user_name'], 'boss')
+
+    def test_audit_cannot_drop_below_in_stock_serials(self):
+        url = f'{ITEMS}{self.product.id}/'
+        self.assertEqual(self.client.get(url).data['in_stock_serials'], 2)
+        self.assertEqual(self.client.patch(url, {'quantity': 1, 'physicalQty': 1}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(url, {'quantity': 2, 'physicalQty': 2}, format='json').status_code, 200)
+        self.assertEqual(self.client.patch(url, {'quantity': 4, 'physicalQty': 4}, format='json').status_code, 200)

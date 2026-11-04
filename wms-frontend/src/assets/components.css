@@ -9,6 +9,13 @@
   }
 }
 
+/* 송장처럼 따로 인쇄할 영역(.print-only)이 열려 있으면 그것만 인쇄합니다. */
+@media print {
+  body:has(> .print-only) > :not(.print-only) {
+    display: none !important;
+  }
+}
+
 @layer components {
   /* ---------- 화면 레이아웃 ---------- */
   /* <div class="page"> : 세로로 쌓는 기본 화면 */

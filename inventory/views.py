@@ -15,12 +15,14 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import BasePermission, IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, BasePermission, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder
-from .serializers import ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
+from . import carrier
+from .carrier import CarrierError
+from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .serializers import user_display, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,71 @@ def send_webhook_alert(message):
             logger.exception('Webhook 전송 실패')
 
     transaction.on_commit(post)
+
+
+# ---------- 택배 연동 ----------
+SHIPPING_FIELDS = ['contact_name', 'contact_phone', 'zipcode', 'address', 'address_detail']
+
+
+def save_carrier_event(record, event):
+    """택배사가 알려준 단계를 저장합니다. 이미 받은 알림이면 False."""
+    occurred_at = carrier.parse_time(event.get('occurred_at'))
+    if not event.get('event_id') or not event.get('status') or not occurred_at:
+        return False
+    owner = {'sales_order': record} if isinstance(record, SalesOrder) else {'return_order': record}
+    _, created = CarrierEvent.objects.get_or_create(event_id=str(event['event_id'])[:64], defaults={
+        **owner, 'waybill_no': record.waybill_no, 'status': str(event['status'])[:20],
+        'location': str(event.get('location') or '')[:100], 'occurred_at': occurred_at})
+    return created
+
+
+def apply_carrier_data(record, data):
+    """택배사 응답(단계 이력)을 반영합니다. 알림이 늦게 와도 가장 최근 단계를 상태로 씁니다."""
+    for event in data.get('events', []):
+        save_carrier_event(record, event)
+    latest = record.carrier_events.order_by('-occurred_at', '-id').first()
+    record.carrier_status = latest.status if latest else data.get('status', record.carrier_status)
+    record.carrier_error = ''
+    record.save(update_fields=['carrier_status', 'carrier_error'])
+
+
+def request_carrier(record, create):
+    """운송장(배송) 또는 회수 요청을 보냅니다. 실패해도 등록은 유지하고 사유를 남깁니다."""
+    if not carrier.enabled() or record.waybill_no:
+        return
+    if not record.has_address:
+        record.carrier_error = '주소가 없어 택배사에 요청하지 않았습니다.'
+        record.save(update_fields=['carrier_error'])
+        return
+    try:
+        data = create(record)
+    except CarrierError as exc:
+        record.carrier_error = str(exc)[:200]
+        record.save(update_fields=['carrier_error'])
+        return
+    record.waybill_no = data['waybill_no']
+    record.save(update_fields=['waybill_no'])
+    apply_carrier_data(record, data)
+
+
+def cancel_carrier(record, pickup):
+    """등록을 취소할 때 택배 요청도 취소합니다. 이미 기사가 가져갔으면 오류 문구를 반환합니다."""
+    if not carrier.enabled() or not record.waybill_no or record.carrier_status == '취소':
+        return None
+    try:
+        apply_carrier_data(record, carrier.cancel(record.waybill_no, pickup=pickup))
+    except CarrierError as exc:
+        return f'택배사 취소 실패: {exc}'
+    return None
+
+
+def update_shipping_address(record, serializer_class, data):
+    # 주소만 부분 수정합니다. 형식 검사는 각 시리얼라이저 규칙을 따릅니다.
+    fields = {key: data[key] for key in SHIPPING_FIELDS if key in data}
+    if fields:
+        serializer = serializer_class(record, data=fields, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
 
 
 def error_response(message, http_status=status.HTTP_400_BAD_REQUEST):
@@ -74,7 +141,7 @@ def alert_if_low_stock(item):
         send_webhook_alert(f"재고 부족 경고! {item.name}의 현재 재고가 {item.quantity}개로 안전 재고({item.safety_stock}개) 이하입니다. 긴급 발주가 필요합니다.")
 
 
-def change_serial_status(serial, new_status, quality=None, description=''):
+def change_serial_status(serial, new_status, quality=None, description='', user=None):
     """시리얼 상태를 바꾸고, 재고보유 여부가 달라지면 재고 수량과 이력도 함께 맞춥니다. 실패 시 오류 문구를 반환합니다."""
     item = Item.objects.select_for_update().get(pk=serial.item_id)
     was_in_stock = serial.status == IN_STOCK
@@ -85,12 +152,12 @@ def change_serial_status(serial, new_status, quality=None, description=''):
             return f'[{item.sku}] 재고가 0개라 상태를 변경할 수 없습니다.'
         item.quantity -= 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=description[:200])
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=description[:200], user=user)
         alert_if_low_stock(item)
     elif is_in_stock and not was_in_stock:
         item.quantity += 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=description[:200])
+        InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=description[:200], user=user)
 
     serial.status = new_status
     if quality:
@@ -195,7 +262,8 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class ItemViewSet(viewsets.ModelViewSet):
-    queryset = Item.objects.select_related('category', 'location').filter(is_active=True)
+    queryset = Item.objects.select_related('category', 'location').filter(is_active=True).annotate(
+        in_stock_serials=Count('serials', filter=Q(serials__status=IN_STOCK)))
     serializer_class = ItemSerializer
     permission_classes = [IsAdminRole]
 
@@ -235,16 +303,16 @@ class ItemViewSet(viewsets.ModelViewSet):
         item = self.get_object()
         new_location_id = to_int(request.data.get('new_location_id'))
         if new_location_id is None:
-            return error_response('이동할 목표 로케이션 ID를 입력해주세요.')
+            return error_response('이동할 보관 위치를 선택해주세요.')
         new_location = WarehouseLocation.objects.filter(id=new_location_id).first()
         if not new_location:
-            return error_response('존재하지 않는 로케이션 구역입니다.', status.HTTP_404_NOT_FOUND)
+            return error_response('존재하지 않는 보관 위치입니다.', status.HTTP_404_NOT_FOUND)
 
         old_location_str = item.location.full_code if item.location else '미지정'
         item.location = new_location
         item.save(update_fields=['location'])
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"로케이션 이동: [{old_location_str}] ➔ [{new_location.full_code}]")
-        return Response({'message': '로케이션 변경 완료', 'location': new_location.full_code})
+        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}]", user=request.user)
+        return Response({'message': '보관 위치 이동 완료', 'location': new_location.full_code})
 
     def create(self, request, *args, **kwargs):
         # 사용 중지된 SKU를 다시 등록하면 기존 상품과 이력을 이어서 사용합니다.
@@ -254,7 +322,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(stopped, data=request.data)
         serializer.is_valid(raise_exception=True)
         item = serializer.save(is_active=True)
-        InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, description='사용 중지 상품 재등록')
+        InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, description='사용 중지 상품 재등록', user=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def perform_destroy(self, instance):
@@ -266,11 +334,11 @@ class ItemViewSet(viewsets.ModelViewSet):
             raise ValidationError({'error': '진행 중인 주문 또는 발주서에 포함된 상품은 삭제할 수 없습니다.'})
         item.is_active = False
         item.save(update_fields=['is_active'])
-        InventoryLog.objects.create(item=item, action='DISABLE', quantity_changed=0, description='상품 삭제(사용 중지)')
+        InventoryLog.objects.create(item=item, action='DISABLE', quantity_changed=0, description='상품 삭제(사용 중지)', user=self.request.user)
 
     def perform_create(self, serializer):
         item = serializer.save()
-        InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity)
+        InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, user=self.request.user)
 
     def perform_update(self, serializer):
         # 동시에 수정해도 수량 변화가 어긋나지 않도록 행을 잠급니다.
@@ -284,6 +352,12 @@ class ItemViewSet(viewsets.ModelViewSet):
             )
             if in_progress:
                 raise ValidationError({'error': '진행 중인 주문 또는 발주서에 포함된 상품은 시리얼 관리 설정을 바꿀 수 없습니다.'})
+        new_quantity = serializer.validated_data.get('quantity', old_quantity)
+        if new_tracked and new_quantity < old_quantity:
+            # 창고에 있다고 기록된 시리얼보다 수량이 적어지면 둘이 어긋나므로 막습니다.
+            in_stock = old.serials.filter(status=IN_STOCK).count()
+            if new_quantity < in_stock:
+                raise ValidationError({'error': f'[{old.sku}] 재고보유 시리얼이 {in_stock}개라 수량을 {in_stock}개 미만으로 줄일 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.'})
         item = serializer.save()
         quantity_diff = item.quantity - old_quantity
 
@@ -293,7 +367,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             if 'physicalQty' in self.request.data: # 실사 조정일 경우
                 description = "월말 재고 실사 조정"
                 send_webhook_alert(f"재고 오차 조정 발생: {item.name} ({quantity_diff}개)")
-            InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description)
+            InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user)
 
             # 🌟 NEW: 안전 재고 이하로 떨어졌을 때 웹훅 알림 발송
             if quantity_diff < 0:
@@ -313,7 +387,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             return error_response(f'재고가 부족합니다. (현재 {item.quantity}개)')
         item.quantity += change
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='IN' if change > 0 else 'OUT', quantity_changed=change)
+        InventoryLog.objects.create(item=item, action='IN' if change > 0 else 'OUT', quantity_changed=change, user=request.user)
         if change < 0:
             alert_if_low_stock(item)
         return Response(self.get_serializer(item).data)
@@ -345,7 +419,7 @@ class ItemViewSet(viewsets.ModelViewSet):
                 return error_response('이미 창고에 등록된 시리얼 번호입니다.')
             item.quantity += 1
             item.save(update_fields=['quantity'])
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1)
+            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, user=request.user)
             return Response({'message': f'S/N [{serial_number}] 입고 완료'})
 
         serial_obj = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item, status=IN_STOCK).first()
@@ -355,7 +429,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         serial_obj.save()
         item.quantity -= 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1)
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, user=request.user)
 
         # 🌟 NEW: 출고 후 안전 재고 체크
         alert_if_low_stock(item)
@@ -397,7 +471,7 @@ class ItemViewSet(viewsets.ModelViewSet):
                     skipped_count += 1
                     continue
                 item = Item.objects.create(sku=sku, name=name, quantity=qty, item_type=item_type, serial_tracked=item_type == '상품')
-                InventoryLog.objects.create(item=item, action='NEW', quantity_changed=qty)
+                InventoryLog.objects.create(item=item, action='NEW', quantity_changed=qty, user=request.user)
                 success_count += 1
         except csv.Error:
             transaction.set_rollback(True)
@@ -418,7 +492,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
 # 🌟 NEW: 발주서(PO) API 및 검수 입고 로직
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
-    queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item').order_by('-order_date')
+    queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item__location', 'items__received_serials').order_by('-order_date', '-id')
     serializer_class = PurchaseOrderSerializer
     permission_classes = [IsAdminRole]
     # 입고 이력과 어긋나지 않도록 등록 후에는 수정, 삭제 대신 취소만 허용합니다.
@@ -467,7 +541,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             return error_response(f'발주 수량을 초과합니다. (남은 수량 {remaining}개)')
 
         if serial_number:
-            ItemSerial.objects.create(item=master_item, serial_number=serial_number, status=IN_STOCK)
+            ItemSerial.objects.create(item=master_item, serial_number=serial_number, status=IN_STOCK, po_item=po_item)
 
         po_item.received_quantity += receive_qty
         po_item.save(update_fields=['received_quantity'])
@@ -476,7 +550,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         master_item.quantity += receive_qty
         master_item.save(update_fields=['quantity'])
         description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '')
-        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200])
+        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user)
 
         # 모든 품목 입고 완료 체크
         all_received = all(i.received_quantity >= i.order_quantity for i in po.items.all())
@@ -486,8 +560,65 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         fresh = self.get_queryset().get(pk=po.pk)
         return Response({'message': f'발주 품목 [{sku}] 정상 입고 처리 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
 
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def cancel_receipt(self, request, pk=None):
+        # 잘못 스캔한 입고를 되돌립니다. 시리얼 관리 상품은 시리얼 1개씩, 그 외는 수량으로 취소합니다.
+        sku = clean_code(request.data.get('sku'))
+        serial_number = clean_code(request.data.get('serial_number'))
+        cancel_qty = to_int(request.data.get('quantity', 1))
+        if not sku or cancel_qty is None or cancel_qty < 1:
+            return error_response('취소할 상품(SKU)과 수량을 확인해주세요.')
+
+        po = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if po.status == '취소됨':
+            return error_response('취소된 발주서입니다.')
+        po_item = po.items.select_for_update().filter(item__sku=sku).first()
+        if not po_item:
+            return error_response('해당 발주서에 존재하지 않는 상품(SKU)입니다.')
+        if cancel_qty > po_item.received_quantity:
+            return error_response(f'입고된 수량보다 많이 취소할 수 없습니다. (입고 {po_item.received_quantity}개)')
+
+        item = Item.objects.select_for_update().get(pk=po_item.item_id)
+        serial = None
+        if item.serial_tracked:
+            if not serial_number:
+                return error_response('시리얼 관리 상품입니다. 취소할 시리얼을 스캔해주세요.')
+            if cancel_qty != 1:
+                return error_response('시리얼 관리 상품은 1개씩 취소해주세요.')
+            serial = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item).first()
+            # 이 기능 이전에 입고된 시리얼은 발주 연결이 없어 입고 기록으로 확인합니다.
+            from_this_po = serial and (serial.po_item_id == po_item.id or (
+                serial.po_item_id is None and InventoryLog.objects.filter(item=item, description=f'발주번호 {po.po_number} 정상 입고 S/N {serial_number}').exists()))
+            if not from_this_po:
+                return error_response(f'[{serial_number}] 이 발주서로 입고된 시리얼이 아닙니다.')
+            if serial.status != IN_STOCK:
+                return error_response(f'[{serial_number}] {serial.status} 상태라 입고를 취소할 수 없습니다.')
+            if serial.order_picks.exists():
+                return error_response(f'[{serial_number}] 출고 주문에 스캔된 시리얼입니다. 주문 화면에서 다시 스캔으로 지운 뒤 취소해주세요.')
+        elif serial_number:
+            return error_response('시리얼을 관리하지 않는 상품입니다. 수량으로 취소해주세요.')
+
+        if item.quantity < cancel_qty:
+            return error_response(f'재고가 부족해 취소할 수 없습니다. 이미 출고되었는지 확인해주세요. (현재 {item.quantity}개)')
+
+        if serial:
+            serial.delete()
+        po_item.received_quantity -= cancel_qty
+        po_item.save(update_fields=['received_quantity'])
+        item.quantity -= cancel_qty
+        item.save(update_fields=['quantity'])
+        description = f'발주번호 {po.po_number} 입고 취소' + (f' S/N {serial_number}' if serial else '')
+        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user)
+        alert_if_low_stock(item)
+
+        po.status = '입고중' if any(line.received_quantity > 0 for line in po.items.all()) else '발주대기'
+        po.save(update_fields=['status'])
+
+        fresh = self.get_queryset().get(pk=po.pk)
+        return Response({'message': f'[{item.name}] {cancel_qty}개 입고 취소 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
+
 class SalesOrderViewSet(viewsets.ModelViewSet):
-    queryset = SalesOrder.objects.prefetch_related('items__item__location', 'items__picked_serials__serial').order_by('-created_at', '-id')
+    queryset = SalesOrder.objects.prefetch_related('items__item__location', 'items__picked_serials__serial', 'carrier_events').order_by('-created_at', '-id')
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
     http_method_names = ['get', 'post', 'head', 'options']
@@ -498,13 +629,50 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         return queryset.filter(status=order_status) if order_status else queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        order = serializer.save(created_by=self.request.user)
+        request_carrier(order, carrier.create_shipment)
+
+    def _order_response(self, order, message=''):
+        return Response({'message': message, 'order': self.get_serializer(self.get_queryset().get(pk=order.pk)).data})
+
+    @action(detail=True, methods=['post'])
+    def issue_waybill(self, request, pk=None):
+        # 운송장 발급을 다시 시도합니다. 주소를 함께 보내면 고친 뒤 발급합니다.
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if not carrier.enabled():
+            return error_response('택배 연동이 설정되지 않았습니다.')
+        if order.status != '출고대기':
+            return error_response(f'{order.status} 상태의 주문은 운송장을 발급할 수 없습니다.')
+        if order.waybill_no:
+            return error_response(f'이미 운송장이 발급되었습니다. ({order.waybill_no})')
+        update_shipping_address(order, SalesOrderSerializer, request.data)
+        request_carrier(order, carrier.create_shipment)
+        if not order.waybill_no:
+            return error_response(order.carrier_error or '운송장을 발급하지 못했습니다.')
+        return self._order_response(order, f'운송장 {order.waybill_no} 발급 완료')
+
+    @action(detail=True, methods=['post'])
+    def track(self, request, pk=None):
+        # 택배사에서 최신 배송 단계를 가져옵니다. 출고했는데 집하 요청이 실패했었다면 다시 보냅니다.
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if not carrier.enabled() or not order.waybill_no:
+            return error_response('운송장이 없는 주문입니다.')
+        try:
+            if order.status == '출고완료' and order.carrier_error.startswith('집하 요청 실패'):
+                carrier.request_collection(order.waybill_no)
+            apply_carrier_data(order, carrier.track(order.waybill_no))
+        except CarrierError as exc:
+            return error_response(str(exc))
+        return self._order_response(order, f'배송 상태: {order.carrier_status}')
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
         if order.status != '출고대기':
             return error_response(f'{order.status} 상태의 주문은 취소할 수 없습니다.')
+        error = cancel_carrier(order, pickup=False)
+        if error:
+            return error_response(error)
         SalesOrderSerial.objects.filter(line__order=order).delete()
         order.status = '취소됨'
         order.save(update_fields=['status'])
@@ -615,16 +783,24 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
             item.save(update_fields=['quantity'])
             serial_ids = [pick.serial_id for pick in line.picked_serials.all()]
             ItemSerial.objects.filter(id__in=serial_ids).update(status='출고완료', updated_at=timezone.now())
-            InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고')
+            InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고', user=request.user)
             alert_if_low_stock(item)
 
         order.status = '출고완료'
         order.completed_at = timezone.now()
         order.save(update_fields=['status', 'completed_at'])
-        return Response({'message': f'출고 완료 (총 {len(lines)}종 재고 차감)', 'status': order.status})
+
+        # 재고는 이미 차감되었으므로, 집하 요청이 실패해도 출고는 유지하고 관리자가 [배송 조회]로 다시 보냅니다.
+        if carrier.enabled() and order.waybill_no:
+            try:
+                carrier.request_collection(order.waybill_no)
+            except CarrierError as exc:
+                order.carrier_error = f'집하 요청 실패: {exc}'[:200]
+                order.save(update_fields=['carrier_error'])
+        return Response({'message': f'출고 완료 (총 {len(lines)}종 재고 차감)', 'status': order.status, 'waybill_no': order.waybill_no})
 
 class ReturnOrderViewSet(viewsets.ModelViewSet):
-    queryset = ReturnOrder.objects.select_related('serial__item').order_by('-created_at', '-id')
+    queryset = ReturnOrder.objects.select_related('serial__item').prefetch_related('carrier_events').order_by('-created_at', '-id')
     serializer_class = ReturnOrderSerializer
     permission_classes = [IsAdminRole]
     http_method_names = ['get', 'post', 'head', 'options']
@@ -635,13 +811,47 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
         return queryset.filter(status=return_status) if return_status else queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        return_order = serializer.save(created_by=self.request.user)
+        request_carrier(return_order, carrier.create_pickup)
+
+    def _return_response(self, return_order, message=''):
+        return Response({'message': message, 'return': self.get_serializer(self.get_queryset().get(pk=return_order.pk)).data})
+
+    @action(detail=True, methods=['post'])
+    def request_pickup(self, request, pk=None):
+        # 회수 요청을 다시 보냅니다. 주소를 함께 보내면 고친 뒤 요청합니다.
+        return_order = ReturnOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if not carrier.enabled():
+            return error_response('택배 연동이 설정되지 않았습니다.')
+        if return_order.status != '회수대기':
+            return error_response(f'{return_order.status} 상태의 반품은 회수 요청할 수 없습니다.')
+        if return_order.waybill_no:
+            return error_response(f'이미 회수 요청이 접수되었습니다. ({return_order.waybill_no})')
+        update_shipping_address(return_order, ReturnOrderSerializer, request.data)
+        request_carrier(return_order, carrier.create_pickup)
+        if not return_order.waybill_no:
+            return error_response(return_order.carrier_error or '회수 요청을 보내지 못했습니다.')
+        return self._return_response(return_order, f'회수 운송장 {return_order.waybill_no} 접수 완료')
+
+    @action(detail=True, methods=['post'])
+    def track(self, request, pk=None):
+        return_order = ReturnOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if not carrier.enabled() or not return_order.waybill_no:
+            return error_response('회수 운송장이 없는 반품입니다.')
+        try:
+            apply_carrier_data(return_order, carrier.track(return_order.waybill_no))
+        except CarrierError as exc:
+            return error_response(str(exc))
+        return self._return_response(return_order, f'회수 상태: {return_order.carrier_status}')
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         return_order = ReturnOrder.objects.select_for_update().get(pk=self.get_object().pk)
         if return_order.status != '회수대기':
             return error_response(f'{return_order.status} 상태의 반품은 취소할 수 없습니다.')
+        error = cancel_carrier(return_order, pickup=True)
+        if error:
+            return error_response(error)
         return_order.status = '취소됨'
         return_order.save(update_fields=['status'])
         return Response({'message': f'반품 {return_order.return_no} 취소 완료', 'status': return_order.status})
@@ -665,7 +875,7 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
             return error_response(f'출고완료 상태의 시리얼만 회수할 수 있습니다. (현재: {serial.status})')
 
         description = f'반품 {return_order.return_no} 회수: {serial.serial_number}' + (f' ({detail})' if detail else '')
-        error = change_serial_status(serial, new_status, quality, description)
+        error = change_serial_status(serial, new_status, quality, description, request.user)
         if error:
             return error_response(error)
 
@@ -682,7 +892,7 @@ class LogPagination(PageNumberPagination):
 
 
 class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = InventoryLog.objects.select_related('item').order_by('-timestamp', '-id')
+    queryset = InventoryLog.objects.select_related('item', 'user').order_by('-timestamp', '-id')
     serializer_class = InventoryLogSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = LogPagination
@@ -722,7 +932,7 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
 
         def rows():
             yield '\ufeff'
-            yield writer.writerow(['발생일시', '구분', 'SKU', '상품명', '변동수량', '비고'])
+            yield writer.writerow(['발생일시', '구분', 'SKU', '상품명', '변동수량', '처리자', '비고'])
             for log in self.get_queryset().iterator(chunk_size=1000):
                 yield writer.writerow([
                     timezone.localtime(log.timestamp).strftime('%Y-%m-%d %H:%M:%S'),
@@ -730,6 +940,7 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
                     csv_safe(log.item.sku),
                     csv_safe(log.item.name),
                     log.quantity_changed,
+                    csv_safe(user_display(log.user)),
                     csv_safe(log.description),
                 ])
 
@@ -760,7 +971,7 @@ class ItemSerialViewSet(viewsets.ModelViewSet):
 
         serials = list(ItemSerial.objects.select_for_update().filter(id__in=[to_int(i) for i in ids]))
         for serial in serials:
-            error = change_serial_status(serial, new_status or serial.status, new_quality, f'시리얼 상태 변경: {serial.serial_number}')
+            error = change_serial_status(serial, new_status or serial.status, new_quality, f'시리얼 상태 변경: {serial.serial_number}', request.user)
             if error:
                 transaction.set_rollback(True)
                 return error_response(error)
@@ -771,6 +982,13 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
     queryset = WarehouseLocation.objects.all().order_by('zone', 'rack', 'tier')
     serializer_class = WarehouseLocationSerializer
     permission_classes = [IsAdminRole]
+
+    def perform_destroy(self, instance):
+        # 지우면 상품의 위치가 조용히 비워지므로, 보관 중인 상품이 있으면 막습니다.
+        count = instance.items.filter(is_active=True).count()
+        if count:
+            raise ValidationError({'error': f'상품 {count}개가 이 위치에 보관 중이라 삭제할 수 없습니다. 상품을 다른 위치로 옮긴 뒤 삭제해 주세요.'})
+        instance.delete()
 
 
 class TodayAPIView(APIView):
@@ -826,3 +1044,24 @@ class DashboardAPIView(APIView):
         top_moving_data = [{'sku': row['item__sku'], 'name': row['item__name'], 'movements': row['movements']} for row in top_moving]
 
         return Response({'trend': trend_data, 'occupancy': occupancy_data, 'today_count': today_count, 'top_moving': top_moving_data}, status=status.HTTP_200_OK)
+
+
+class CarrierWebhookView(APIView):
+    # 택배사가 배송·회수 단계가 바뀔 때마다 호출합니다. 로그인 대신 HMAC 서명으로 확인합니다.
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        if not carrier.verify_signature(request.body, request.headers.get('X-Carrier-Signature', '')):
+            return Response({'result': 'ERROR', 'message': '서명이 올바르지 않습니다.'}, status=status.HTTP_401_UNAUTHORIZED)
+        event = request.data if isinstance(request.data, dict) else {}
+        waybill_no = str(event.get('waybill_no') or '')
+        record = None
+        if waybill_no:
+            record = (SalesOrder.objects.select_for_update().filter(waybill_no=waybill_no).first()
+                      or ReturnOrder.objects.select_for_update().filter(waybill_no=waybill_no).first())
+        if not record:
+            return Response({'result': 'ERROR', 'message': '없는 운송장입니다.'}, status=status.HTTP_404_NOT_FOUND)
+        if save_carrier_event(record, event):
+            apply_carrier_data(record, {})
+        return Response({'result': 'OK'})

@@ -31,6 +31,11 @@
 
         <div v-else class="work-task justify-center items-center flex-1">
           <div class="text-[64px] font-bold text-success">✔ 모든 품목 스캔 완료</div>
+          <div v-if="order.waybill_no" class="flex items-center gap-6 text-4xl">
+            <span>운송장 <b class="font-mono">{{ order.waybill_no }}</b></span>
+            <button class="work-btn" @click="labelOpen = true">송장 출력</button>
+          </div>
+          <div v-else-if="order.carrier_error" class="text-3xl text-danger font-bold">운송장 없음: 관리자에게 운송장 발급을 요청하세요.</div>
           <button ref="completeRef" class="work-btn work-btn-success w-full h-32! text-5xl!" :disabled="isSaving" @click="complete">출고 완료 (Enter)</button>
         </div>
       </section>
@@ -51,6 +56,8 @@
       </aside>
     </div>
 
+    <ShippingLabelModal v-if="labelOpen" :order="order" @close="labelOpen = false" />
+
     <QuantityDialog v-if="qtyLine" :name="qtyLine.item_name" :remaining="qtyLine.quantity - qtyLine.picked_quantity"
       @confirm="enterQuantity" @close="qtyLine = null" />
   </WorkLayout>
@@ -62,6 +69,7 @@ import axios from 'axios'
 import WorkLayout from '../../components/work/WorkLayout.vue'
 import ScanBox from '../../components/work/ScanBox.vue'
 import QuantityDialog from '../../components/work/QuantityDialog.vue'
+import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
 import { apiErrorMessage } from '../../utils/apiError'
 
@@ -72,6 +80,7 @@ const contextSku = ref('')
 const qtyLine = ref(null)
 const isSaving = ref(false)
 const completeRef = ref(null)
+const labelOpen = ref(false)
 
 const isDone = (line) => line.picked_quantity >= line.quantity
 const totalQuantity = (row) => row.items.reduce((sum, line) => sum + line.quantity, 0)

@@ -102,7 +102,26 @@ class PurchaseOrderItem(models.Model):
     def __str__(self):
         return f"{self.po.po_number} - {self.item.name}"
 
-class SalesOrder(models.Model):
+class ShippingInfo(models.Model):
+    # 택배 연동에 쓰는 주소와 운송장. 주문에서는 수령인, 반품에서는 회수할 고객입니다.
+    contact_name = models.CharField(max_length=50, blank=True, default='')
+    contact_phone = models.CharField(max_length=20, blank=True, default='')
+    zipcode = models.CharField(max_length=10, blank=True, default='')
+    address = models.CharField(max_length=200, blank=True, default='')
+    address_detail = models.CharField(max_length=100, blank=True, default='')
+    waybill_no = models.CharField(max_length=30, blank=True, default='', db_index=True)
+    carrier_status = models.CharField(max_length=20, blank=True, default='')  # 택배사가 알려준 최근 상태
+    carrier_error = models.CharField(max_length=200, blank=True, default='')  # 택배사 요청 실패 사유
+
+    class Meta:
+        abstract = True
+
+    @property
+    def has_address(self):
+        return bool(self.contact_name and self.contact_phone and self.zipcode and self.address)
+
+
+class SalesOrder(ShippingInfo):
     STATUS_CHOICES = [
         ('출고대기', '출고대기'),
         ('출고완료', '출고완료'),
@@ -155,6 +174,8 @@ class ItemSerial(models.Model):
     ]
     quality = models.CharField(max_length=20, choices=QUALITY_CHOICES, default='신규상품')
     location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True, related_name='serials')
+    # 발주 입고로 들어온 시리얼이면 그 발주 품목. 입고 취소 때 어느 발주로 들어왔는지 확인합니다.
+    po_item = models.ForeignKey('PurchaseOrderItem', on_delete=models.SET_NULL, null=True, blank=True, related_name='received_serials')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -171,7 +192,7 @@ class SalesOrderSerial(models.Model):
             models.UniqueConstraint(fields=['line', 'serial'], name='unique_line_serial'),
         ]
 
-class ReturnOrder(models.Model):
+class ReturnOrder(ShippingInfo):
     STATUS_CHOICES = [
         ('회수대기', '회수대기'),
         ('회수완료', '회수완료'),
@@ -195,6 +216,7 @@ class InventoryLog(models.Model):
     quantity_changed = models.IntegerField()
     timestamp = models.DateTimeField(auto_now_add=True)
     description = models.CharField(max_length=200, blank=True, null=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+') # 처리자
 
     class Meta:
         indexes = [
@@ -202,3 +224,16 @@ class InventoryLog(models.Model):
             models.Index(fields=['item', '-timestamp'], name='log_item_time_idx'),
             models.Index(fields=['action', '-timestamp'], name='log_action_time_idx'),
         ]
+
+class CarrierEvent(models.Model):
+    # 택배사에서 받은 배송·회수 단계 이력. 같은 알림이 두 번 와도 한 번만 저장합니다.
+    sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='carrier_events')
+    return_order = models.ForeignKey(ReturnOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='carrier_events')
+    event_id = models.CharField(max_length=64, unique=True)
+    waybill_no = models.CharField(max_length=30)
+    status = models.CharField(max_length=20)
+    location = models.CharField(max_length=100, blank=True, default='')
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ['occurred_at', 'id']

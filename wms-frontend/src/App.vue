@@ -2,7 +2,10 @@
   <template v-if="!authStore.isAuthenticated || route.meta.work"><router-view /></template>
 
   <div v-else class="flex w-screen h-screen overflow-hidden bg-surface-app text-ink text-body font-sans">
-    <aside class="hidden md:flex w-[230px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden">
+    <!-- 좁은 화면에서는 메뉴 버튼으로 여닫습니다. -->
+    <div v-if="menuOpen" class="md:hidden fixed inset-0 z-[1090] bg-black/40" @click="menuOpen = false"></div>
+    <aside class="md:flex md:static w-[230px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden"
+      :class="menuOpen ? 'flex fixed inset-y-0 left-0 z-[1100] shadow-lg' : 'hidden'">
       <div class="bg-surface-nav text-white p-3 border-b-2 border-primary text-center">
         <h2 class="m-0 text-heading font-bold">WMS 시스템</h2>
       </div>
@@ -30,7 +33,8 @@
 
     <main class="flex-1 flex flex-col min-w-0 md:min-w-[800px] bg-white overflow-hidden">
       <header class="bg-surface-head h-[44px] border-b border-line-strong flex flex-col shrink-0 print:hidden">
-        <div class="flex h-full justify-between items-end px-2.5 pl-[5px]">
+        <div class="flex h-full justify-between items-end gap-1 px-2.5 pl-[5px]">
+          <button class="btn btn-sm mb-1 md:hidden" aria-label="메뉴 열기" @click="menuOpen = true">☰ 메뉴</button>
           <div
             class="flex gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <div v-for="tab in tabStore.openTabs" :key="tab.path"
@@ -75,7 +79,7 @@
 </template>
 
 <script setup>
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useTabStore } from './stores/tabStore'
@@ -114,7 +118,9 @@ const menuGroups = [
   ] },
 ]
 
+const menuOpen = ref(false)
 const openMenu = (path) => { router.push(path) }
+watch(() => route.path, () => { menuOpen.value = false })
 
 const handleLogout = () => {
   authStore.logout()

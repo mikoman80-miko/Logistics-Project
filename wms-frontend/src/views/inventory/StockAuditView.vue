@@ -3,7 +3,7 @@
     <div class="panel flex-1">
       <div
         class="panel-header">
-        <span class="panel-title">정기 재고 실사 (Inventory Audit)</span>
+        <span class="panel-title">재고 조사</span>
         <div>
           <button
             class="btn"
@@ -18,7 +18,8 @@
 
       <div class="panel-body">
         <div class="alert alert-info">
-          ※ 전산 상의 재고와 실제 창고 재고(실물 재고)를 대조합니다. 실물 재고 칸에 숫자를 입력하면 오차가 자동 계산됩니다.
+          ※ 전산 재고와 실제 창고 재고(실물 재고)를 대조합니다. 실물 재고 칸에 숫자를 입력하면 오차가 자동 계산됩니다.<br />
+          ※ 시리얼 관리 상품은 재고보유 시리얼 수보다 적게 입력할 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.
         </div>
 
         <table class="data-table data-table-sm">
@@ -59,10 +60,11 @@
               <td class="text-center font-mono">{{ item.sku }}</td>
               <td
                 class="font-bold whitespace-nowrap overflow-hidden text-ellipsis">
-                {{ item.name }}</td>
+                {{ item.name }}
+                <span v-if="item.serialTracked" class="block font-normal text-caption text-muted">재고보유 시리얼 {{ item.minQty }}개</span></td>
               <td class="text-right font-bold">{{ item.systemQty }}</td>
               <td class="text-center">
-                <input type="number" v-model.number="item.physicalQty"
+                <input type="number" v-model.number="item.physicalQty" :min="item.minQty"
                   class="field field-num w-[80px]"
                   @input="calculateDiff(item)" />
               </td>
@@ -72,7 +74,7 @@
               </td>
               <td class="text-center font-bold"
                 :class="item.difference !== 0 ? 'text-danger' : 'text-success'">
-                {{ item.difference === 0 ? '일치' : '불일치' }}
+                {{ statusText(item) }}
               </td>
             </tr>
           </tbody>
@@ -85,6 +87,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useInventoryStore } from '../../stores/inventory'
+import { apiErrorMessage } from '../../utils/apiError'
 
 const store = useInventoryStore()
 const auditList = ref([])
@@ -98,8 +101,15 @@ const fetchData = async () => {
     location: item.location_name,
     systemQty: item.quantity,
     physicalQty: item.quantity,
-    difference: 0
+    difference: 0,
+    serialTracked: item.serial_tracked,
+    minQty: item.serial_tracked ? (item.in_stock_serials || 0) : 0,
   }))
+}
+
+const statusText = (item) => {
+  if (item.physicalQty < item.minQty) return '시리얼 확인'
+  return item.difference === 0 ? '일치' : '불일치'
 }
 
 const calculateDiff = (item) => {
@@ -116,16 +126,18 @@ const applyAudit = async () => {
   if (!confirm(`총 ${discrepancies.length}건의 불일치 항목이 발견되었습니다.\n실물 재고 기준으로 전산 재고를 강제 조정하시겠습니까?`)) return
 
   let success = 0
+  const failures = []
   for (const item of discrepancies) {
     try {
       await store.updateQuantity(item.id, item.physicalQty, true)
       success++
     } catch (e) {
-      console.error(`[${item.sku}] 조정 실패`, e)
+      failures.push(apiErrorMessage(e, `[${item.sku}] 조정 중 오류가 발생했습니다.`))
     }
   }
 
-  alert(`재고 조정 완료 (총 ${success}건 반영)`)
+  const summary = `재고 조정 완료 (총 ${success}건 반영)`
+  alert(failures.length ? `${summary}\n\n반영하지 못한 ${failures.length}건:\n${failures.join('\n')}` : summary)
   await fetchData()
 }
 

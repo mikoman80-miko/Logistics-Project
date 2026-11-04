@@ -10,8 +10,7 @@
         <div class="modal-content text-center">
           <h2 class="m-0 mb-2.5 text-[16px]">{{ selectedBarcodeItem.name }}</h2>
           <p class="m-0 mb-2.5 font-bold">구역: {{ selectedBarcodeItem.location_name || '미지정' }}</p>
-          <img :src="`https://barcode.tec-it.com/barcode.ashx?data=${selectedBarcodeItem.sku}&code=Code128`"
-            alt="Barcode" class="max-w-full border border-black mx-auto" />
+          <Barcode :value="selectedBarcodeItem.sku" :height="70" />
           <p class="font-mono text-heading mt-1 font-bold">{{ selectedBarcodeItem.sku }}</p>
         </div>
         <div class="modal-footer print:hidden">
@@ -39,8 +38,7 @@
             class="text-center border border-dashed border-line p-[15px] w-[220px] break-inside-avoid">
             <h2 class="m-0 mb-2 text-heading whitespace-nowrap overflow-hidden text-ellipsis">{{ item.name }}</h2>
             <p class="m-0 mb-2 text-body font-bold">구역: {{ item.location_name || '미지정' }}</p>
-            <img :src="`https://barcode.tec-it.com/barcode.ashx?data=${item.sku}&code=Code128`" alt="Barcode"
-              class="max-w-full h-[60px] mx-auto" />
+            <Barcode :value="item.sku" :height="60" :module-width="1.5" />
             <p class="font-mono text-body mt-1 font-bold">{{ item.sku }}</p>
           </div>
         </div>
@@ -58,7 +56,7 @@
     <!-- 이력 조회 모달 -->
     <div v-if="selectedHistoryItem"
       class="modal-overlay print:hidden">
-      <div class="modal w-[500px]">
+      <div class="modal w-[720px]">
         <div class="modal-header">[{{ selectedHistoryItem.sku }}] 이력 조회
         </div>
         <div class="h-[300px] overflow-y-auto p-0 bg-white">
@@ -71,14 +69,14 @@
                 <th
                  
                   width="100">구분</th>
-                <th
-                 >
-                  변동수량</th>
+                <th width="80">변동수량</th>
+                <th width="90">처리자</th>
+                <th>비고</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="itemHistoryLogs.length === 0">
-                <td colspan="3" class="text-center">기록이 없습니다.</td>
+                <td colspan="5" class="text-center">기록이 없습니다.</td>
               </tr>
               <tr v-for="log in itemHistoryLogs" :key="log.id">
                 <td class="text-center">{{ new Date(log.timestamp).toLocaleString('ko-KR') }}</td>
@@ -87,6 +85,8 @@
                   :class="log.quantity_changed > 0 ? 'text-primary' : 'text-danger'">
                   {{ log.quantity_changed > 0 ? '+' : '' }}{{ log.quantity_changed }}
                 </td>
+                <td class="text-center truncate">{{ log.user_name || '-' }}</td>
+                <td class="truncate" :title="log.description">{{ log.description || '' }}</td>
               </tr>
             </tbody>
           </table>
@@ -304,6 +304,7 @@ import axios from 'axios';
 import { downloadCsv } from '../utils/csv';
 import { apiErrorMessage } from '../utils/apiError';
 import { playBeep } from '../utils/beep';
+import Barcode from '../components/Barcode.vue';
 
 const store = useInventoryStore();
 const toast = useToastStore();

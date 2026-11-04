@@ -2,7 +2,7 @@
   <div class="erp-login-bg">
     <div class="erp-login-box">
       <div class="login-header">
-        <h1>WMS System Login</h1>
+        <h1>WMS 물류관리시스템 로그인</h1>
       </div>
       <form @submit.prevent="handleLogin" class="login-body">
         <table class="login-table">

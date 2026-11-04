@@ -12,10 +12,10 @@
             <th class="border border-line p-2 text-center font-bold text-white bg-primary w-[15%]">창고 내 총 재고</th>
             <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-primary">{{
               totalQuantity.toLocaleString() }} 개</td>
-            <th class="border border-line p-2 text-center font-bold text-white bg-danger-dark w-[15%]">재고 부족 (주의필요)</th>
+            <th class="border border-line p-2 text-center font-bold text-white bg-danger-dark w-[15%]">재고 부족</th>
             <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-danger">{{
               lowStockCount.toLocaleString() }} SKU</td>
-            <th class="border border-line p-2 text-center font-bold text-white bg-warning w-[15%]">금일 트랜잭션</th>
+            <th class="border border-line p-2 text-center font-bold text-white bg-warning w-[15%]">오늘 입출고 건수</th>
             <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-warning">{{
               todayCount.toLocaleString() }} 건</td>
           </tr>
@@ -26,7 +26,7 @@
     <!-- 장기 체화 재고 및 품절 경고 박스 -->
     <div v-if="lowStockItems.length > 0"
       class="border border-danger bg-danger-soft p-2 text-ink shadow-[2px_2px_0px_rgba(0,0,0,0.05)]">
-      <div class="font-bold text-danger mb-1 text-body">※ [경고] 장기 체화 및 재고 부족 상품 (안전 재고 이하) - 긴급 발주 및 조달 확인 필요</div>
+      <div class="font-bold text-danger mb-1 text-body">※ 재고 부족 상품 (안전 재고 이하) - 발주가 필요한지 확인하세요</div>
       <div class="flex flex-wrap gap-1">
         <span v-for="item in lowStockItems" :key="item.id"
           class="bg-white border border-[#ffcdd2] px-1.5 py-0.5 text-caption">
@@ -39,8 +39,7 @@
     <!-- 대시보드 시각화 차트 영역 -->
     <div class="flex gap-3 h-[240px]">
       <div class="panel flex-1">
-        <div class="panel-header panel-title">최근 30일 입출고 추이
-          (API 연동)</div>
+        <div class="panel-header panel-title">최근 30일 입출고 추이</div>
         <div class="p-2.5 h-full relative box-border overflow-hidden">
           <Bar v-if="isChartDataLoaded" :data="trendChartData" :options="chartOptions" />
           <div v-else class="text-center pt-[50px]">차트 데이터 로딩 중...</div>
@@ -48,8 +47,7 @@
       </div>
 
       <div class="panel flex-1">
-        <div class="panel-header panel-title">창고 구역(Zone)별 재고
-          점유율</div>
+        <div class="panel-header panel-title">구역별 재고 비율</div>
         <div class="p-2.5 h-full relative box-border overflow-hidden">
           <Doughnut v-if="isChartDataLoaded" :data="occupancyChartData" :options="chartOptions" />
           <div v-else class="text-center pt-[50px]">차트 데이터 로딩 중...</div>
@@ -60,21 +58,20 @@
     <!-- 중간 분석 그리드 영역 -->
     <div class="flex gap-3">
       <div class="panel flex-1">
-        <div class="panel-header panel-title">보관 구역별 재고 점유 현황
-          (상세)</div>
+        <div class="panel-header panel-title">보관 위치별 재고</div>
         <div class="p-2 overflow-auto h-[160px]">
           <table class="data-table data-table-sm">
             <thead>
               <tr>
                 <th
                  
-                  width="35%">보관 구역</th>
+                  width="35%">보관 위치</th>
                 <th
                  
                   width="35%">재고 수량</th>
                 <th
                  
-                  width="30%">점유율(%)</th>
+                  width="30%">비율(%)</th>
               </tr>
             </thead>
             <tbody>
@@ -93,8 +90,7 @@
       </div>
 
       <div class="panel flex-1">
-        <div class="panel-header panel-title">입출고 활성도 TOP 5
-          (실시간 트렌드 기준)</div>
+        <div class="panel-header panel-title">입출고가 많은 상품 TOP 5 (최근 30일)</div>
         <div class="p-2 overflow-auto h-[160px]">
           <table class="data-table data-table-sm">
             <thead>
@@ -134,7 +130,7 @@
     <div class="panel flex-1 min-h-0">
       <div
         class="panel-header">
-        <span class="panel-title">실시간 입출고 상세 로그 및 트렌드 분석 </span>
+        <span class="panel-title">입출고 상세 기록</span>
         <div class="flex items-center">
             <span class="mr-2">총 <strong>{{ logTotal.toLocaleString() }}</strong>건 ({{ logPage }}/{{ logPageCount }})</span>
             <button class="btn btn-sm mr-0.5" :disabled="logPage <= 1" @click="logPage--">이전</button>
@@ -172,11 +168,12 @@
               <th
                
                 width="120">변동 수량</th>
+              <th width="110">처리자</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="logRows.length === 0">
-              <td colspan="5" class="text-center">조회된 입출고 내역이 없습니다.</td>
+              <td colspan="6" class="text-center">조회된 입출고 내역이 없습니다.</td>
             </tr>
             <tr v-for="log in logRows" :key="log.id">
               <td class="text-center">{{ new
@@ -191,6 +188,7 @@
                 :class="log.quantity_changed > 0 ? 'text-primary' : 'text-danger'">
                 {{ log.quantity_changed > 0 ? '+' : '' }}{{ log.quantity_changed }}
               </td>
+              <td class="text-center truncate">{{ log.user_name || '-' }}</td>
             </tr>
           </tbody>
         </table>

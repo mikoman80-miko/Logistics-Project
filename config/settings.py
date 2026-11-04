@@ -181,6 +181,12 @@ REST_FRAMEWORK = {
 
 ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '')
 
+# 택배사 API. 주소를 비워 두면 택배 연동 없이 동작합니다.
+CARRIER_API_URL = os.environ.get('CARRIER_API_URL', '').rstrip('/')
+CARRIER_API_KEY = os.environ.get('CARRIER_API_KEY', '')
+CARRIER_WEBHOOK_SECRET = os.environ.get('CARRIER_WEBHOOK_SECRET', '')
+CARRIER_CALLBACK_URL = os.environ.get('CARRIER_CALLBACK_URL', '')
+
 # 운영 환경에서 HTTPS를 쓸 때 DJANGO_HTTPS=True로 켭니다.
 if env_bool('DJANGO_HTTPS'):
     SECURE_SSL_REDIRECT = True

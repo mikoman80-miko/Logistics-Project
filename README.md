@@ -14,7 +14,8 @@ copy .env.example .env    # 값을 채웁니다
 myenv\Scripts\python manage.py migrate
 myenv\Scripts\python manage.py createsuperuser
 
-# 프런트엔드
+# 프런트엔드와 pm2
+npm ci
 cd wms-frontend
 npm ci
 ```
@@ -27,13 +28,22 @@ myenv\Scripts\python -c "import secrets; print(secrets.token_urlsafe(64))"
 
 ## 실행
 
-```powershell
-# 터미널 1 (프로젝트 루트)
-myenv\Scripts\python manage.py runserver
+Django(8000), 화면(5173), 가상 택배사(8100)를 pm2로 한 번에 실행합니다. 모두 프로젝트 루트에서 입력합니다.
 
-# 터미널 2 (wms-frontend)
-npm run dev
+```powershell
+npm run start      # 세 서버 실행
+npm run restart    # 세 서버 재시작
+npm run status     # 상태 확인
+npm run logs       # 로그 보기 (Ctrl+C로 빠져나옵니다)
+npm run stop       # 멈춤 (pm2 목록에는 남음)
+npm run down       # 멈추고 pm2 목록에서도 지움
 ```
+
+- 하나만 재시작할 때는 `npx pm2 restart django`처럼 이름(django, frontend, carrier)을 붙입니다.
+- 파이썬 파일(config, inventory, mock_carrier)을 고치면 해당 서버가 자동으로 재시작됩니다. 화면은 Vite가 바로 반영합니다.
+- 서버를 따로 띄우던 터미널이 있으면 먼저 닫아야 포트가 겹치지 않습니다.
+- 실행할 서버 목록과 설정은 `ecosystem.config.js`에 있으므로 `pm2 save`는 하지 않아도 됩니다. PC를 다시 켠 뒤에는 `npm run start`를 한 번 입력합니다.
+- 파이썬 서버는 `scripts/run-python.js`를 거쳐 실행합니다. Windows에서 빈 콘솔 창이 뜨지 않게 하기 위해서입니다.
 
 브라우저에서 http://localhost:5173 으로 접속합니다.
 
@@ -49,7 +59,29 @@ npm run dev
 - 설정은 기본 설정 → 상품에서 언제든 바꿀 수 있습니다. 단, 진행 중인 주문이나 발주서에 포함된 상품은 끝난 뒤에 바꿉니다.
 - 시리얼 관리 상품은 입출고할 때 시리얼을 1개씩 스캔합니다. 관리하지 않는 상품은 상품코드를 스캔하거나 수량을 입력합니다.
 - 시리얼 없이 들어와 있던 재고는 그 수량 안에서, 상품코드를 스캔한 뒤 시리얼을 스캔하면 출고 때 등록됩니다.
+- 잘못 입고한 품목은 현장 입고 화면이나 발주 관리에서 [입고 취소]로 되돌립니다. 시리얼 관리 상품은 시리얼 1개씩, 그 외는 수량으로 취소합니다.
+- 재고 조사에서 시리얼 관리 상품의 수량은 재고보유 시리얼 수보다 적게 줄일 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿉니다.
 - 바코드 스캐너는 키보드처럼 입력하므로 영문 입력 상태여야 합니다. 한글 상태로 스캔하면 화면이 안내합니다.
+
+## 택배 연동 (가상 택배사)
+
+개발·시연용 가상 택배사 "가온택배" 서버가 들어 있습니다. WMS는 실제 택배사와 같은 방식으로 HTTP API를 호출하고, 택배사는 배송 단계가 바뀔 때마다 WMS에 알립니다.
+
+```powershell
+# 터미널 3 (프로젝트 루트)
+myenv\Scripts\python mock_carrier\server.py
+```
+
+- `.env`에 `.env.example`의 `CARRIER_...` 항목을 복사해 넣습니다. `CARRIER_API_URL`을 비우면 택배 연동 없이 동작합니다.
+- 주문을 등록하면 운송장이 발급되고, 출고를 완료하면 집하를 요청합니다. 이후 단계(집하 → 배송중 → 배송출발 → 배송완료)는 `MOCK_CARRIER_STEP_SECONDS`초마다 진행됩니다.
+- 반품을 등록하면 회수를 요청합니다. 회수지를 비워 두면 그 기기를 출고한 주문의 배송지를 씁니다.
+- 가온택배 화면 (http://127.0.0.1:8100)
+  - 배송 조회 `/`: 고객이 보는 화면입니다. 진행 단계와 이력을 보여주고, 이름·전화번호·주소는 일부만 표시합니다.
+  - 송장 콘솔 `/console`: 송장 검색과 상태별 현황을 봅니다. 시연할 때 [다음 단계]·[완료까지]·[취소]로 바로 진행합니다.
+  - 웹훅 기록 `/webhooks`: WMS에 보낸 상태 알림과 응답 결과입니다. WMS가 알림을 못 받을 때 원인을 찾습니다.
+  - API 문서 `/docs`: 연동 규격, 오류 코드, 웹훅 서명 확인 방법입니다.
+- 주소에 "없는주소"를 넣으면 주소 오류를, `MOCK_CARRIER_FAIL_RATE`를 0보다 크게 하면 일시 장애를 시연할 수 있습니다.
+- 다른 택배사로 바꿀 때는 `inventory/carrier.py`만 교체합니다.
 
 ## 테스트와 백업
 

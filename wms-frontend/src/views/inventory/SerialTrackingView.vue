@@ -44,7 +44,7 @@
             <td class="text-right">
               <button
                 class="btn btn-primary"
-                @click="fetchData">조회 (Refresh)</button>
+                @click="fetchData">새로고침</button>
             </td>
           </tr>
         </tbody>

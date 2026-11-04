@@ -24,6 +24,29 @@
       </form>
     </div>
 
+    <div v-if="cancelForm" class="modal-overlay" @click.self="cancelForm = null">
+      <form class="modal w-[450px]" @submit.prevent="submitCancel">
+        <div class="modal-header">입고 취소</div>
+        <div class="modal-content flex flex-col gap-2.5">
+          <div class="alert alert-warning m-0">[{{ cancelForm.line.item_sku }}] {{ cancelForm.line.item_name }} · 입고 {{ cancelForm.line.received_quantity }}개<br />취소한 수량만큼 재고가 줄고, 발주서의 입고 수량도 줄어듭니다.</div>
+          <label v-if="cancelForm.line.serial_tracked" class="field-label">취소할 시리얼
+            <select v-model="cancelForm.serial_number" class="field w-full mt-1" required>
+              <option value="" disabled>시리얼 선택</option>
+              <option v-for="sn in cancelForm.line.received_serials" :key="sn" :value="sn">{{ sn }}</option>
+            </select>
+            <span v-if="cancelForm.line.received_serials.length === 0" class="block mt-1 font-normal text-danger">취소할 수 있는 시리얼이 없습니다. 이미 출고되었거나 상태가 바뀌었습니다.</span>
+          </label>
+          <label v-else class="field-label">취소할 수량
+            <input v-model.number="cancelForm.quantity" type="number" min="1" :max="cancelForm.line.received_quantity" class="field field-num w-[120px] mt-1 block" required />
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-danger btn-lg" :disabled="isSaving">입고 취소</button>
+          <button type="button" class="btn btn-lg" @click="cancelForm = null">닫기</button>
+        </div>
+      </form>
+    </div>
+
     <div class="page-split">
       <div class="panel w-full md:w-[420px] shrink-0">
         <div class="panel-header">
@@ -73,6 +96,7 @@
                 <th width="80">시리얼</th>
                 <th width="90">발주 수량</th>
                 <th width="90">입고 수량</th>
+                <th width="90">관리</th>
               </tr>
             </thead>
             <tbody>
@@ -82,6 +106,9 @@
                 <td class="text-center">{{ item.serial_tracked ? '관리' : '-' }}</td>
                 <td class="text-right font-bold">{{ item.order_quantity }}</td>
                 <td class="text-right font-bold text-primary">{{ item.received_quantity }}</td>
+                <td class="text-center">
+                  <button v-if="item.received_quantity > 0" class="btn btn-sm btn-danger" @click="openCancel(item)">입고 취소</button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -156,6 +183,27 @@ const submitPO = async () => {
     await fetchPOs()
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '발주서 등록 중 오류가 발생했습니다.'), 'error', 5000)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+const cancelForm = ref(null)
+const openCancel = (line) => {
+  cancelForm.value = { line, serial_number: '', quantity: 1 }
+}
+
+const submitCancel = async () => {
+  const { line, serial_number, quantity } = cancelForm.value
+  const body = line.serial_tracked ? { sku: line.item_sku, serial_number } : { sku: line.item_sku, quantity }
+  isSaving.value = true
+  try {
+    const res = await axios.post(`/api/inventory/purchase-orders/${selected.value.id}/cancel_receipt/`, body)
+    toast.addToast(res.data.message, 'success')
+    cancelForm.value = null
+    await fetchPOs()
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '입고 취소 중 오류가 발생했습니다.'), 'error', 5000)
   } finally {
     isSaving.value = false
   }

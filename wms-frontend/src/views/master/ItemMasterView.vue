@@ -25,7 +25,7 @@
           <tr>
             <th>상품 수동 등록</th>
             <td colspan="4">
-              <form @submit.prevent="handleAddItem" class="flex items-center gap-1.5">
+              <form @submit.prevent="handleAddItem" class="flex flex-wrap items-center gap-1.5">
                 구분: <select v-model="newItemForm.item_type" class="field w-[80px]" @change="newItemForm.serial_tracked = newItemForm.item_type === '상품'">
                   <option v-for="type in ITEM_TYPES" :key="type" :value="type">{{ type }}</option>
                 </select>
@@ -42,7 +42,9 @@
                 </select>
                 <button type="button" class="btn" @click="addCategory">추가</button>
                 수량: <input type="number" v-model="newItemForm.quantity"
-                  class="field field-num w-[60px]" required />
+                  class="field field-num w-[60px]" min="0" required />
+                안전 재고: <input type="number" v-model.number="newItemForm.safety_stock"
+                  class="field field-num w-[60px]" min="0" required />
                 <button type="submit"
                   class="btn btn-success ml-2">신규
                   등록</button>
@@ -65,7 +67,7 @@
     <div
       class="panel flex-1 overflow-hidden mt-2.5">
       <div class="panel-header">
-        <span class="panel-title">상품 마스터 관리 목록</span>
+        <span class="panel-title">상품 목록</span>
         <span class="text-body">총 <strong>{{ filteredItems.length }}</strong> 개 상품</span>
       </div>
 
@@ -86,20 +88,17 @@
               <th
                 class="text-primary"
                 width="60">ABC</th>
-              <th
-               
-                width="80">현재수량</th>
+              <th width="80">현재수량</th>
+              <th width="80">안전 재고</th>
               <th
                
                 width="180">보관 위치</th>
-              <th
-               
-                width="120">관리 도구</th>
+              <th width="170">관리 도구</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="filteredItems.length === 0">
-              <td colspan="9" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다. 위에서 상품을 등록하세요.</td>
+              <td colspan="10" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다. 위에서 상품을 등록하세요.</td>
             </tr>
             <tr v-for="item in filteredItems" :key="item.id">
               <td class="text-center">
@@ -118,10 +117,12 @@
                 :class="{ 'text-danger': item.abc_grade === 'C', 'text-success': item.abc_grade === 'A' }">{{
                   item.abc_grade || '-' }}</td>
               <td class="text-right font-bold"
-                :class="{ 'text-danger': item.quantity === 0 }">{{ item.quantity.toLocaleString() }}</td>
+                :class="{ 'text-danger': item.quantity === 0, 'text-warning': item.quantity > 0 && item.quantity <= item.safety_stock }">{{ item.quantity.toLocaleString() }}</td>
+              <td class="text-right">{{ item.safety_stock }}</td>
               <td class="text-center font-mono">{{ getLocationName(item.location) }}
               </td>
               <td class="text-center flex justify-center gap-1">
+                <button class="btn btn-sm" @click="openEditModal(item)">수정</button>
                 <button
                   class="btn btn-success btn-sm"
                   @click="openTransferModal(item)">위치이동</button>
@@ -135,11 +136,37 @@
       </div>
     </div>
 
+    <!-- 상품 수정 모달 -->
+    <div v-if="editForm" class="modal-overlay" @click.self="editForm = null">
+      <form class="modal w-[450px]" @submit.prevent="submitEdit">
+        <div class="modal-header">상품 수정 <span class="font-mono">({{ editForm.sku }})</span></div>
+        <div class="modal-content flex flex-col gap-2.5">
+          <label class="field-label">상품명
+            <input v-model="editForm.name" class="field w-full mt-1" maxlength="200" required />
+          </label>
+          <label class="field-label">카테고리
+            <select v-model="editForm.category" class="field w-full mt-1">
+              <option :value="null">미분류</option>
+              <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+            </select>
+          </label>
+          <label class="field-label">안전 재고
+            <input v-model.number="editForm.safety_stock" type="number" min="0" class="field field-num w-[120px] mt-1 block" required />
+            <span class="block mt-1 font-normal text-muted">현재 재고가 이 수량 이하이면 재고 부족으로 표시하고 알림을 보냅니다.</span>
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary btn-lg">저장</button>
+          <button type="button" class="btn btn-lg" @click="editForm = null">취소</button>
+        </div>
+      </form>
+    </div>
+
     <!-- 보관 위치 이동 모달 -->
     <div v-if="isTransferModalOpen" class="modal-overlay"
       @click.self="closeTransferModal">
       <div class="modal w-[450px]">
-        <div class="modal-header">보관 위치(위치) 이동</div>
+        <div class="modal-header">보관 위치 이동</div>
         <div class="modal-content">
           <div class="bg-[#eff6ff] border border-[#bfdbfe] text-[#1e40af] p-3 mb-4 text-sm font-bold">대상 상품: {{
             selectedItem?.name }} <span class="font-mono">({{ selectedItem?.sku }})</span></div>
@@ -181,7 +208,7 @@ const isTransferModalOpen = ref(false);
 const selectedItem = ref(null);
 const selectedLocationId = ref('');
 const ITEM_TYPES = ['상품', '구성품', '부자재', '사은품'];
-const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, category: null });
+const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, safety_stock: 5, category: null });
 const newItemForm = ref(emptyItemForm());
 const toast = useToastStore();
 const csvInput = ref(null);
@@ -267,6 +294,20 @@ const deleteItem = async (id) => {
   } catch (err) { toast.addToast(apiErrorMessage(err, '삭제 중 오류가 발생했습니다.'), 'error', 5000); }
 };
 
+const editForm = ref(null);
+const openEditModal = (item) => {
+  editForm.value = { id: item.id, sku: item.sku, name: item.name, category: item.category, safety_stock: item.safety_stock };
+};
+const submitEdit = async () => {
+  const { id, sku, ...change } = editForm.value;
+  try {
+    await axios.patch(`/api/inventory/items/${id}/`, change);
+    toast.addToast(`[${sku}] 수정되었습니다.`, 'success');
+    editForm.value = null;
+    await fetchItems();
+  } catch (err) { toast.addToast(apiErrorMessage(err, '수정 중 오류가 발생했습니다.'), 'error', 5000); }
+};
+
 const openTransferModal = (item) => {
   selectedItem.value = item;
   selectedLocationId.value = '';
@@ -286,7 +327,7 @@ const submitTransfer = async () => {
     toast.addToast('보관 위치 이동이 완료되었습니다.', 'success');
     closeTransferModal();
     await fetchItems();
-  } catch (err) { toast.addToast('이동 실패', 'error'); }
+  } catch (err) { toast.addToast(apiErrorMessage(err, '이동 중 오류가 발생했습니다.'), 'error', 5000); }
 };
 
 const handleCsvUpload = async (event) => {
