@@ -1,6 +1,16 @@
 {
+  "private": true,
+  "scripts": {
+    "start": "pm2 start ecosystem.config.js",
+    "restart": "pm2 restart ecosystem.config.js",
+    "stop": "pm2 stop ecosystem.config.js",
+    "status": "pm2 status",
+    "logs": "pm2 logs",
+    "down": "pm2 delete ecosystem.config.js"
+  },
   "devDependencies": {
     "autoprefixer": "^10.6.1",
+    "pm2": "7.0.4",
     "postcss": "^8.5.31",
     "tailwindcss": "^4.3.3"
   }
