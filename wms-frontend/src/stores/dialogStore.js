@@ -11,6 +11,10 @@ import { defineStore } from 'pinia'
 export const useDialogStore = defineStore('dialog', () => {
   const current = ref(null)
   let resolver = null
+  // 다른 팝업(비밀번호 변경 등)이 열려 있는 수. 현장 화면 스캔 입력창이 커서를 가져가지 않게 합니다.
+  const blockers = ref(0)
+  const block = () => { blockers.value++ }
+  const unblock = () => { blockers.value = Math.max(0, blockers.value - 1) }
 
   const open = (kind, message, options = {}) => {
     if (resolver) resolver(kind === 'alert' ? undefined : null)  // 이전 창이 남아 있으면 취소로 닫습니다.
@@ -28,6 +32,9 @@ export const useDialogStore = defineStore('dialog', () => {
   return {
     current,
     close,
+    blockers,
+    block,
+    unblock,
     alert: (message, options) => open('alert', message, options),
     confirm: (message, options) => open('confirm', message, options),
     prompt: (message, options) => open('prompt', message, options),

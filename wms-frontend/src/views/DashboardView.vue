@@ -201,6 +201,7 @@
 // [기존 코드에서 단 1글자도 변경되지 않았습니다]
 import { ref, computed, onActivated, watch } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
+import { useToastStore } from '../stores/toastStore';
 import axios from 'axios';
 import { Bar, Doughnut } from 'vue-chartjs';
 import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement } from 'chart.js';
@@ -208,6 +209,7 @@ import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, Li
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement);
 
 const store = useInventoryStore();
+const toast = useToastStore();
 const logFilter = ref('ALL');
 const logSearch = ref('');
 
@@ -264,7 +266,10 @@ watch([logFilter, logSearch], () => {
   }, 300);
 });
 
-const downloadCSV = () => store.downloadLogs(logParams());
+const downloadCSV = async () => {
+  const { saved, total } = await store.downloadLogs(logParams());
+  if (saved < total) toast.addToast(`기록이 많아 최근 ${saved.toLocaleString()}건만 저장했습니다. 기간이나 검색어로 줄여 주세요.`, 'info', 6000);
+};
 
 const isChartDataLoaded = ref(false);
 const trendChartData = ref({ labels: [], datasets: [] });

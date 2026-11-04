@@ -24,6 +24,9 @@
             <div class="text-caption text-muted">보내는 분</div>
             <div>WMS 물류센터</div>
           </div>
+          <div v-if="order.bundle_orders?.length" class="pt-2 border-b border-black pb-1.5">
+            묶음 {{ order.bundle_orders.length }}건: <b class="font-mono">{{ order.bundle_orders.join(', ') }}</b>
+          </div>
           <div class="pt-2 flex justify-between">
             <span>주문번호 <b class="font-mono">{{ order.order_no }}</b></span>
             <span>{{ order.items?.length || 0 }}종 {{ totalQuantity }}개</span>

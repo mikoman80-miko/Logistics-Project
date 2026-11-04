@@ -8,6 +8,7 @@
       <div class="flex items-center gap-4 text-2xl">
         <span>{{ authStore.user?.name }}</span>
         <button v-if="isAdmin" class="work-header-btn" @click="router.push('/today')">관리 화면</button>
+        <button class="work-header-btn" @click="passwordOpen = true">비밀번호</button>
         <button class="work-header-btn" @click="authStore.logout()">로그아웃</button>
       </div>
     </header>
@@ -15,6 +16,8 @@
     <main class="work-body">
       <slot />
     </main>
+
+    <PasswordChangeModal v-if="passwordOpen" large @close="passwordOpen = false" />
 
     <div v-if="feedback?.type === 'ok'" class="work-toast-ok">✔ {{ feedback.message }}</div>
     <div v-if="feedback?.type === 'error'" class="work-error" @click="dismiss">
@@ -26,10 +29,11 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
+import PasswordChangeModal from '../PasswordChangeModal.vue'
 
 defineProps({
   title: { type: String, required: true },
@@ -40,6 +44,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { feedback, dismiss } = useWorkFeedback()
 const isAdmin = computed(() => authStore.user?.role === '관리자')
+const passwordOpen = ref(false)
 
 // 스캐너는 끝에 Enter를 보내므로, 오류 확인은 Enter가 아닌 스페이스바로 받습니다.
 const onKeydown = (event) => {

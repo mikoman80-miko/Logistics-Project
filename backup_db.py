@@ -43,10 +43,10 @@ def backup_mariadb():
     except (OSError, subprocess.CalledProcessError, RuntimeError) as e:
         # 실패한 빈 파일이 정상 백업처럼 남지 않게 지웁니다.
         backup_path.unlink(missing_ok=True)
-        print(f"❌ 백업 실패! .env의 DB 설정과 MariaDB 설치 경로를 확인해주세요.\n에러 내용: {e}")
+        print(f"[실패] 백업 실패! .env의 DB 설정과 MariaDB 설치 경로를 확인해주세요.\n에러 내용: {e}")
         return False
 
-    print(f"✅ 백업 성공! 파일이 저장되었습니다: {backup_path}")
+    print(f"[완료] 백업 성공! 파일이 저장되었습니다: {backup_path}")
     return True
 
 

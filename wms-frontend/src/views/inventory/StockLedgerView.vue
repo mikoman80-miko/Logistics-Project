@@ -90,7 +90,7 @@
 <script setup>
 import { ref, onActivated, onMounted } from 'vue';
 import axios from 'axios';
-import * as XLSX from 'xlsx';
+import { downloadXlsx } from '../../utils/excel';
 import { useToastStore } from '../../stores/toastStore';
 
 const ledgerList = ref([]);
@@ -122,21 +122,9 @@ const exportExcel = () => {
     toast.addToast('다운로드할 수불부 데이터가 없습니다.', 'error');
     return;
   }
-  const excelData = ledgerList.value.map(row => ({
-    '상품코드': row.sku,
-    '상품명': row.name,
-    '카테고리': row.category_name,
-    '보관 위치': row.location,
-    '기초재고': row.opening_qty,
-    '당기입고': row.inbound_qty,
-    '당기출고': row.outbound_qty,
-    '기말재고': row.closing_qty
-  }));
-
-  const worksheet = XLSX.utils.json_to_sheet(excelData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, '재고수불부');
-  XLSX.writeFile(workbook, `재고수불부_${startDate.value}_to_${endDate.value}.xlsx`);
+  const headers = ['상품코드', '상품명', '카테고리', '보관 위치', '기초재고', '당기입고', '당기출고', '기말재고'];
+  const rows = ledgerList.value.map(row => [row.sku, row.name, row.category_name, row.location, row.opening_qty, row.inbound_qty, row.outbound_qty, row.closing_qty]);
+  downloadXlsx(`재고수불부_${startDate.value}_${endDate.value}`, '재고수불부', headers, rows);
 };
 
 // 다른 탭에서 입출고한 뒤 돌아와도 최신 수치를 보여줍니다.

@@ -21,7 +21,7 @@ const inputRef = ref(null)
 const value = ref('')
 const dialog = useDialogStore()
 // 오류 화면이나 확인 팝업이 떠 있으면 스캔을 받지 않고, 커서도 가져오지 않습니다.
-const locked = computed(() => props.paused || feedback.value?.type === 'error' || !!dialog.current)
+const locked = computed(() => props.paused || feedback.value?.type === 'error' || !!dialog.current || dialog.blockers > 0)
 
 const focus = () => { if (!locked.value) inputRef.value?.focus() }
 

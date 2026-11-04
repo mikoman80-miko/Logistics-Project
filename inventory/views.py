@@ -6,6 +6,8 @@ from io import StringIO
 
 import requests # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, DateField, DateTimeField, F, Func, Q, Sum, Value
 from django.db.models.functions import Coalesce
@@ -18,6 +20,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, BasePermission, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from . import carrier
@@ -52,6 +55,7 @@ def send_webhook_alert(message):
 
 # ---------- 택배 연동 ----------
 SHIPPING_FIELDS = ['contact_name', 'contact_phone', 'zipcode', 'address', 'address_detail']
+SHIPPING_LABELS = {'contact_name': '받는 분', 'contact_phone': '연락처', 'zipcode': '우편번호', 'address': '주소', 'address_detail': '상세주소'}
 
 
 def save_carrier_event(record, event):
@@ -74,6 +78,8 @@ def apply_carrier_data(record, data):
     record.carrier_status = latest.status if latest else data.get('status', record.carrier_status)
     record.carrier_error = ''
     record.save(update_fields=['carrier_status', 'carrier_error'])
+    if isinstance(record, SalesOrder):
+        SalesOrder.objects.filter(bundle_parent=record).update(carrier_status=record.carrier_status, carrier_error='')
 
 
 def request_carrier(record, create):
@@ -106,6 +112,12 @@ def cancel_carrier(record, pickup):
     return None
 
 
+def bundle_shipped(master):
+    # 묶음(대표 + 묶인 주문) 중 취소되지 않은 주문이 모두 출고되었는지
+    statuses = SalesOrder.objects.filter(Q(pk=master.pk) | Q(bundle_parent=master)).exclude(status='취소됨').values_list('status', flat=True)
+    return all(value == '출고완료' for value in statuses)
+
+
 def update_shipping_address(record, serializer_class, data):
     # 주소만 부분 수정합니다. 형식 검사는 각 시리얼라이저 규칙을 따릅니다.
     fields = {key: data[key] for key in SHIPPING_FIELDS if key in data}
@@ -134,6 +146,45 @@ def filter_documents(queryset, params, date_field, search_fields, date_only=Fals
     if end:
         queryset = queryset.filter(**({f'{date_field}__lte': end} if date_only else {f'{date_field}__lt': day_start(end + timedelta(days=1))}))
     return queryset
+
+
+def address_key(record):
+    # 묶음배송 비교용: 공백과 전화번호 구분 기호를 무시합니다.
+    clean = lambda value: ' '.join((value or '').split())
+    return (clean(record.contact_name), re.sub(r'\D', '', record.contact_phone or ''), clean(record.zipcode),
+            clean(record.address), clean(record.address_detail))
+
+
+def update_order(order, changes, lines=None):
+    """출고대기 주문을 고칩니다. 배송지가 바뀌면 기존 송장을 취소하고 새로 발급합니다. (오류 문구, 메시지)를 돌려줍니다."""
+    old_address = [getattr(order, key) for key in SHIPPING_FIELDS]
+    for key, value in changes.items():
+        setattr(order, key, value)
+    address_changed = old_address != [getattr(order, key) for key in SHIPPING_FIELDS]
+    if carrier.enabled() and not order.has_address:
+        return '택배 발송에 필요한 이름, 연락처, 우편번호, 주소를 모두 입력해주세요.', ''
+    if address_changed and (order.bundle_parent_id or order.bundle_members.exists()):
+        return '묶음배송 주문입니다. 묶음을 해제한 뒤 배송지를 바꿔 주세요.', ''
+
+    if address_changed and order.waybill_no:
+        error = cancel_carrier(order, pickup=False)
+        if error:
+            return f'{error} 배송지를 바꾸려면 기존 송장을 먼저 취소해야 합니다.', ''
+        order.carrier_events.all().delete()  # 취소한 송장의 이력은 새 송장과 섞이지 않게 지웁니다.
+        order.waybill_no, order.carrier_status = '', ''
+    order.save()
+    if lines is not None:
+        order.items.all().delete()
+        SalesOrderItem.objects.bulk_create([SalesOrderItem(order=order, **line) for line in lines])
+    if not order.bundle_parent_id:
+        request_carrier(order, carrier.create_shipment)
+
+    message = f'주문 {order.order_no} 수정 완료'
+    if address_changed and order.waybill_no:
+        message += f' (새 운송장 {order.waybill_no})'
+    elif order.carrier_error:
+        message += f'. 운송장 발급 실패: {order.carrier_error}'
+    return None, message
 
 
 def error_response(message, http_status=status.HTTP_400_BAD_REQUEST):
@@ -644,7 +695,9 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         return Response({'message': f'[{item.name}] {cancel_qty}개 입고 취소 완료', 'status': po.status, 'po': self.get_serializer(fresh).data})
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
-    queryset = SalesOrder.objects.prefetch_related('items__item__location', 'items__picked_serials__serial', 'carrier_events').order_by('-created_at', '-id')
+    queryset = SalesOrder.objects.select_related('bundle_parent').prefetch_related(
+        'items__item__location', 'items__picked_serials__serial', 'carrier_events', 'bundle_members', 'bundle_parent__bundle_members', 'bundle_parent__carrier_events'
+    ).order_by('-created_at', '-id')
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
     http_method_names = ['get', 'post', 'head', 'options']
@@ -675,30 +728,117 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         lines = changes.pop('items', None)
         if lines is not None and any('item' not in line or 'quantity' not in line for line in lines):
             return error_response('품목마다 상품과 수량을 입력해주세요.')
-        old_address = [getattr(order, key) for key in SHIPPING_FIELDS]
-        for key, value in changes.items():
-            setattr(order, key, value)
-        address_changed = old_address != [getattr(order, key) for key in SHIPPING_FIELDS]
-        if carrier.enabled() and not order.has_address:
-            return error_response('택배 발송에 필요한 이름, 연락처, 우편번호, 주소를 모두 입력해주세요.')
+        error, message = update_order(order, changes, lines)
+        if error:
+            return error_response(error)
+        return self._order_response(order, message)
 
-        if address_changed and order.waybill_no:
-            error = cancel_carrier(order, pickup=False)
+    @action(detail=False, methods=['post'])
+    def import_addresses(self, request):
+        """엑셀로 고친 배송지를 한 번에 반영합니다. apply가 아니면 미리보기만 합니다.
+        rows: [{order_no, contact_name, contact_phone, zipcode, address, address_detail}]"""
+        rows = request.data.get('rows')
+        if not isinstance(rows, list) or not rows:
+            return error_response('반영할 행이 없습니다. 양식의 첫 줄(제목)을 지우지 말고 올려 주세요.')
+        if len(rows) > 1000:
+            return error_response('한 번에 1,000행까지 올릴 수 있습니다.')
+        apply = request.data.get('apply') is True
+        results = []
+        for index, row in enumerate(rows, start=2):  # 엑셀의 2번째 줄부터 데이터
+            row = row if isinstance(row, dict) else {}
+            order_no = str(row.get('order_no') or '').strip()
+            result = {'row': index, 'order_no': order_no, 'status': 'error', 'message': '', 'changes': []}
+            results.append(result)
+            order = SalesOrder.objects.select_for_update().filter(order_no=order_no).first() if order_no else None
+            if not order:
+                result['message'] = '없는 주문번호입니다.'
+                continue
+            if order.status != '출고대기':
+                result['message'] = f'{order.status} 상태라 바꿀 수 없습니다.'
+                continue
+            data = {key: str(row.get(key) or '').strip() for key in SHIPPING_FIELDS}
+            serializer = SalesOrderSerializer(order, data=data, partial=True)
+            if not serializer.is_valid():
+                result['message'] = next(iter(serializer.errors.values()))[0]
+                continue
+            changes = {key: value for key, value in serializer.validated_data.items() if getattr(order, key) != value}
+            result['changes'] = [f'{SHIPPING_LABELS[key]}: {getattr(order, key) or "(없음)"} → {value or "(없음)"}' for key, value in changes.items()]
+            if not changes:
+                result.update(status='unchanged', message='바뀐 내용 없음')
+                continue
+            result['status'] = 'ok'
+            if apply:
+                error, message = update_order(order, changes)
+                result.update(status='error' if error else 'saved', message=error or message)
+        counts = {key: sum(r['status'] == key for r in results) for key in ('ok', 'saved', 'unchanged', 'error')}
+        return Response({'applied': apply, 'counts': counts, 'rows': results})
+
+    @action(detail=False, methods=['post'])
+    def bundle(self, request):
+        # 받는 분과 배송지가 같은 출고대기 주문을 운송장 하나로 묶습니다. 가장 먼저 등록한 주문이 대표입니다.
+        ids = request.data.get('ids')
+        if not isinstance(ids, list) or len({to_int(i) for i in ids}) < 2 or any(to_int(i) is None for i in ids):
+            return error_response('묶을 주문을 2건 이상 선택해주세요.')
+        if not carrier.enabled():
+            return error_response('택배 연동이 설정되지 않았습니다.')
+        ids = {to_int(i) for i in ids}
+        orders = list(SalesOrder.objects.select_for_update().filter(pk__in=ids).order_by('created_at', 'id'))
+        if len(orders) != len(ids):
+            return error_response('없는 주문이 포함되어 있습니다.')
+        for order in orders:
+            if order.status != '출고대기':
+                return error_response(f'[{order.order_no}] {order.status} 상태라 묶을 수 없습니다.')
+            if order.bundle_parent_id or order.bundle_members.exists():
+                return error_response(f'[{order.order_no}] 이미 묶음배송인 주문입니다.')
+            if not order.has_address:
+                return error_response(f'[{order.order_no}] 배송지가 없습니다.')
+            if order.carrier_status not in ('', '접수'):
+                return error_response(f'[{order.order_no}] 이미 택배 {order.carrier_status} 단계입니다.')
+        if len({address_key(order) for order in orders}) > 1:
+            return error_response('받는 분, 연락처, 배송지가 모두 같은 주문만 묶을 수 있습니다.')
+
+        master, members = orders[0], orders[1:]
+        request_carrier(master, carrier.create_shipment)
+        if not master.waybill_no:
+            return error_response(master.carrier_error or '대표 주문의 운송장을 발급하지 못했습니다.')
+        skipped = []
+        for member in members:
+            # 택배사 취소가 실패한 주문은 따로 보내고 나머지만 묶습니다. (이미 취소한 송장을 되돌릴 수 없으므로)
+            error = cancel_carrier(member, pickup=False) if member.waybill_no else None
             if error:
-                return error_response(f'{error} 배송지를 바꾸려면 기존 송장을 먼저 취소해야 합니다.')
-            order.carrier_events.all().delete()  # 취소한 송장의 이력은 새 송장과 섞이지 않게 지웁니다.
-            order.waybill_no, order.carrier_status = '', ''
-        order.save()
-        if lines is not None:
-            order.items.all().delete()
-            SalesOrderItem.objects.bulk_create([SalesOrderItem(order=order, **line) for line in lines])
-        request_carrier(order, carrier.create_shipment)
+                skipped.append(f'{member.order_no}({error})')
+                continue
+            member.carrier_events.all().delete()
+            member.bundle_parent = master
+            member.waybill_no, member.carrier_status, member.carrier_error = master.waybill_no, master.carrier_status, ''
+            member.save(update_fields=['bundle_parent', 'waybill_no', 'carrier_status', 'carrier_error'])
+        bundled = len(members) - len(skipped) + 1
+        message = f'{bundled}건을 운송장 {master.waybill_no} 하나로 묶었습니다.'
+        if skipped:
+            message += f' 묶지 못한 주문: {", ".join(skipped)}'
+        return self._order_response(master, message)
 
-        message = f'주문 {order.order_no} 수정 완료'
-        if address_changed and order.waybill_no:
-            message += f' (새 운송장 {order.waybill_no})'
-        elif order.carrier_error:
-            message += f'. 운송장 발급 실패: {order.carrier_error}'
+    @action(detail=True, methods=['post'])
+    def unbundle(self, request, pk=None):
+        # 묶음을 풀고, 대표 주문을 뺀 나머지 주문에 운송장을 새로 발급합니다.
+        order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        master = order.bundle_parent or order
+        members = list(master.bundle_members.select_for_update())
+        if not members:
+            return error_response('묶음배송이 아닌 주문입니다.')
+        if any(o.status == '출고완료' for o in [master, *members]):
+            return error_response('이미 출고한 주문이 있어 묶음을 풀 수 없습니다.')
+        failed = []
+        for member in members:
+            member.bundle_parent = None
+            member.waybill_no, member.carrier_status, member.carrier_error = '', '', ''
+            member.save(update_fields=['bundle_parent', 'waybill_no', 'carrier_status', 'carrier_error'])
+            request_carrier(member, carrier.create_shipment)
+            if not member.waybill_no:
+                failed.append(member.order_no)
+        message = f'묶음을 풀었습니다. {len(members)}건에 운송장을 새로 발급했습니다.'
+        if failed:
+            message = f'묶음을 풀었습니다. 운송장 발급 실패: {", ".join(failed)} (주문을 열어 다시 발급하세요)'
         return self._order_response(order, message)
 
     @action(detail=True, methods=['post'])
@@ -711,6 +851,8 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
             return error_response(f'{order.status} 상태의 주문은 운송장을 발급할 수 없습니다.')
         if order.waybill_no:
             return error_response(f'이미 운송장이 발급되었습니다. ({order.waybill_no})')
+        if order.bundle_parent_id:
+            return error_response('묶음배송 주문은 대표 주문의 운송장을 씁니다.')
         update_shipping_address(order, SalesOrderSerializer, request.data)
         request_carrier(order, carrier.create_shipment)
         if not order.waybill_no:
@@ -721,21 +863,28 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     def track(self, request, pk=None):
         # 택배사에서 최신 배송 단계를 가져옵니다. 출고했는데 집하 요청이 실패했었다면 다시 보냅니다.
         order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
-        if not carrier.enabled() or not order.waybill_no:
+        master = order.bundle_parent or order
+        if not carrier.enabled() or not master.waybill_no:
             return error_response('운송장이 없는 주문입니다.')
         try:
-            if order.status == '출고완료' and order.carrier_error.startswith('집하 요청 실패'):
-                carrier.request_collection(order.waybill_no)
-            apply_carrier_data(order, carrier.track(order.waybill_no))
+            if master.carrier_error.startswith('집하 요청 실패') and bundle_shipped(master):
+                carrier.request_collection(master.waybill_no)
+            apply_carrier_data(master, carrier.track(master.waybill_no))
         except CarrierError as exc:
             return error_response(str(exc))
-        return self._order_response(order, f'배송 상태: {order.carrier_status}')
+        return self._order_response(order, f'배송 상태: {master.carrier_status}')
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
         if order.status != '출고대기':
             return error_response(f'{order.status} 상태의 주문은 취소할 수 없습니다.')
+        if order.bundle_members.exists():
+            return error_response('묶음배송의 대표 주문입니다. [묶음 해제] 후 취소해 주세요.')
+        if order.bundle_parent_id:  # 대표 주문의 송장은 그대로 두고 이 주문만 묶음에서 뺍니다.
+            order.bundle_parent = None
+            order.waybill_no, order.carrier_status, order.carrier_error = '', '', ''
+            order.save(update_fields=['bundle_parent', 'waybill_no', 'carrier_status', 'carrier_error'])
         error = cancel_carrier(order, pickup=False)
         if error:
             return error_response(error)
@@ -857,13 +1006,18 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=['status', 'completed_at'])
 
         # 재고는 이미 차감되었으므로, 집하 요청이 실패해도 출고는 유지하고 관리자가 [배송 조회]로 다시 보냅니다.
-        if carrier.enabled() and order.waybill_no:
-            try:
-                carrier.request_collection(order.waybill_no)
-            except CarrierError as exc:
-                order.carrier_error = f'집하 요청 실패: {exc}'[:200]
-                order.save(update_fields=['carrier_error'])
-        return Response({'message': f'출고 완료 (총 {len(lines)}종 재고 차감)', 'status': order.status, 'waybill_no': order.waybill_no})
+        message = f'출고 완료 (총 {len(lines)}종 재고 차감)'
+        master = order.bundle_parent or order
+        if carrier.enabled() and master.waybill_no:
+            if bundle_shipped(master):
+                try:
+                    carrier.request_collection(master.waybill_no)
+                except CarrierError as exc:
+                    master.carrier_error = f'집하 요청 실패: {exc}'[:200]
+                    master.save(update_fields=['carrier_error'])
+            else:
+                message += '. 묶음배송의 나머지 주문을 모두 출고하면 집하를 요청합니다.'
+        return Response({'message': message, 'status': order.status, 'waybill_no': order.waybill_no})
 
 class ReturnOrderViewSet(viewsets.ModelViewSet):
     queryset = ReturnOrder.objects.select_related('serial__item').prefetch_related('carrier_events').order_by('-created_at', '-id')
@@ -965,6 +1119,8 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         params = self.request.query_params
+        if params.get('mine') == '1':
+            queryset = queryset.filter(user=self.request.user)
 
         item_id = params.get('item')
         if item_id:
@@ -1108,7 +1264,7 @@ def carrier_issues(limit=10):
         Q(status='출고대기', waybill_no='')
         | Q(status__in=['출고대기', '출고완료']) & ~Q(carrier_error='')
         | Q(status='출고완료', completed_at__lt=stalled_before) & ~Q(waybill_no='') & ~Q(carrier_status__in=['배송완료', '취소'])
-    ).order_by('-created_at')
+    ).filter(bundle_parent__isnull=True).order_by('-created_at')
     returns = ReturnOrder.objects.filter(status='회수대기').filter(Q(waybill_no='') | ~Q(carrier_error='')).order_by('-created_at')
 
     def order_reason(order):
@@ -1193,10 +1349,33 @@ class CarrierWebhookView(APIView):
         waybill_no = str(event.get('waybill_no') or '')
         record = None
         if waybill_no:
-            record = (SalesOrder.objects.select_for_update().filter(waybill_no=waybill_no).first()
+            record = (SalesOrder.objects.select_for_update().filter(waybill_no=waybill_no, bundle_parent__isnull=True).first()
                       or ReturnOrder.objects.select_for_update().filter(waybill_no=waybill_no).first())
         if not record:
             return Response({'result': 'ERROR', 'message': '없는 운송장입니다.'}, status=status.HTTP_404_NOT_FOUND)
         if save_carrier_event(record, event):
             apply_carrier_data(record, {})
         return Response({'result': 'OK'})
+
+
+class PasswordChangeView(APIView):
+    # 로그인한 사람이 자기 비밀번호를 바꿉니다. 현재 비밀번호 추측을 막기 위해 로그인과 같은 횟수 제한을 둡니다.
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
+    def post(self, request):
+        current = str(request.data.get('current_password') or '')
+        new = str(request.data.get('new_password') or '')
+        user = request.user
+        if not user.check_password(current):
+            return error_response('현재 비밀번호가 맞지 않습니다.')
+        if current == new:
+            return error_response('새 비밀번호가 현재 비밀번호와 같습니다.')
+        try:
+            validate_password(new, user)
+        except DjangoValidationError as exc:
+            return error_response(' '.join(exc.messages))
+        user.set_password(new)
+        user.save(update_fields=['password'])
+        return Response({'message': '비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.'})

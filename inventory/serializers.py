@@ -170,11 +170,23 @@ class SalesOrderItemSerializer(serializers.ModelSerializer):
 
 class SalesOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
     items = SalesOrderItemSerializer(many=True)
+    carrier_events = serializers.SerializerMethodField()
+    bundle_orders = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrder
         fields = '__all__'
-        read_only_fields = ['order_no', 'status', 'created_by', 'created_at', 'completed_at', *CARRIER_FIELDS]
+        read_only_fields = ['order_no', 'status', 'created_by', 'created_at', 'completed_at', 'bundle_parent', *CARRIER_FIELDS]
+
+    def get_carrier_events(self, obj):
+        # 묶인 주문은 대표 주문의 배송 이력을 보여줍니다.
+        return CarrierEventSerializer((obj.bundle_parent or obj).carrier_events.all(), many=True).data
+
+    def get_bundle_orders(self, obj):
+        # 같은 상자로 나가는 주문번호 (대표 주문이 먼저). 묶음이 아니면 빈 목록
+        master = obj.bundle_parent or obj
+        members = list(master.bundle_members.all())
+        return [master.order_no, *[m.order_no for m in members]] if members else []
 
     def validate(self, attrs):
         # 택배 연동을 쓰면 새 주문은 배송지가 있어야 운송장을 발급할 수 있습니다.

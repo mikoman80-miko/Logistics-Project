@@ -7,7 +7,7 @@
       <button v-for="row in orders" :key="row.id" class="work-row" @click="order = row">
         <span class="font-bold">{{ row.order_no }}</span>
         <span>{{ row.customer }}</span>
-        <span class="text-muted">{{ row.items.length }}종 {{ totalQuantity(row) }}개</span>
+        <span class="text-muted">{{ row.items.length }}종 {{ totalQuantity(row) }}개<b v-if="row.bundle_orders.length" class="text-primary"> · 묶음</b></span>
       </button>
     </div>
 
@@ -34,6 +34,9 @@
 
         <div v-else class="work-task justify-center items-center flex-1">
           <div class="text-[64px] font-bold text-success">✔ 모든 품목 스캔 완료</div>
+          <div v-if="order.bundle_orders.length" class="text-3xl font-bold text-primary text-center">
+            묶음배송: {{ order.bundle_orders.filter(no => no !== order.order_no).join(', ') }}와 같은 상자에 넣으세요.
+          </div>
           <div v-if="order.waybill_no" class="flex items-center gap-6 text-4xl">
             <span>운송장 <b class="font-mono">{{ order.waybill_no }}</b></span>
             <button class="work-btn" @click="labelOpen = true">송장 출력</button>

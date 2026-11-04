@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import axios from 'axios'
+import { downloadXlsx } from '../utils/excel'
 
 export const useInventoryStore = defineStore('inventory', () => {
   const items = ref([])
@@ -16,13 +17,23 @@ export const useInventoryStore = defineStore('inventory', () => {
     return response.data
   }
 
+  // 조건에 맞는 입출고 기록을 200건씩 받아 엑셀로 저장합니다. 너무 많으면 최근 20,000건까지만 받습니다.
+  const LOG_EXPORT_LIMIT = 20000
   const downloadLogs = async (params = {}) => {
-    const response = await axios.get('/api/inventory/logs/export/', { params, responseType: 'blob' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(response.data)
-    link.download = `WMS_입출고이력_${new Date().toLocaleDateString('sv-SE')}.csv`
-    link.click()
-    URL.revokeObjectURL(link.href)
+    const rows = []
+    let total = 0
+    for (let page = 1; rows.length < LOG_EXPORT_LIMIT; page++) {
+      const data = await fetchLogs({ ...params, page, page_size: 200 })
+      total = data.count
+      rows.push(...data.results)
+      if (!data.next) break
+    }
+    const headers = ['발생일시', '구분', '상품코드', '상품명', '변동수량', '처리자', '비고']
+    downloadXlsx(`입출고기록_${new Date().toLocaleDateString('sv-SE')}`, '입출고기록', headers, rows.map(log => [
+      new Date(log.timestamp).toLocaleString('ko-KR'), log.action_display, log.item_sku, log.item_name,
+      log.quantity_changed, log.user_name, log.description || '',
+    ]))
+    return { saved: rows.length, total }
   }
 
   const addItem = async (itemData) => {

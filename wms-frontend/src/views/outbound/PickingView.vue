@@ -41,6 +41,7 @@
     </div>
 
     <ShippingLabelModal v-if="labelOrder" :order="labelOrder" @close="labelOrder = null" />
+    <AddressImportModal v-if="importOpen" @close="importOpen = false" @saved="loadOrders" />
 
     <div class="page-split">
       <div class="panel w-full md:w-[420px] shrink-0">
@@ -57,10 +58,17 @@
           </div>
         </div>
         <ListFilter :model="filter" placeholder="주문번호, 고객, 운송장, 상품" @apply="loadOrders" />
+        <div class="toolbar px-2.5 py-1.5 border-b border-line bg-surface-head">
+          <span class="text-muted">선택 {{ checkedIds.length }}건</span>
+          <button class="btn btn-sm" :disabled="checkedIds.length < 2 || isSaving" title="받는 분과 배송지가 같은 출고대기 주문을 운송장 하나로 보냅니다" @click="bundleOrders">묶음배송</button>
+          <span class="flex-1"></span>
+          <button class="btn btn-sm" @click="importOpen = true">배송지 일괄 등록</button>
+        </div>
         <div class="panel-body-flush">
           <table class="data-table">
             <thead>
               <tr>
+                <th width="28"></th>
                 <th width="150">주문번호</th>
                 <th>거래처/고객</th>
                 <th width="50">품목</th>
@@ -69,11 +77,17 @@
             </thead>
             <tbody>
               <tr v-if="orders.length === 0" class="empty-row">
-                <td colspan="4">{{ isFiltered ? '조건에 맞는 주문이 없습니다.' : '주문이 없습니다. [주문 등록]을 눌러 추가하세요.' }}</td>
+                <td colspan="5">{{ isFiltered ? '조건에 맞는 주문이 없습니다.' : '주문이 없습니다. [주문 등록]을 눌러 추가하세요.' }}</td>
               </tr>
               <tr v-for="order in orders" :key="order.id" class="is-clickable" :class="{ 'is-selected': selected?.id === order.id }" @click="selected = order">
+                <td class="text-center" @click.stop>
+                  <input v-if="canBundle(order)" v-model="checkedIds" type="checkbox" :value="order.id" :aria-label="`${order.order_no} 선택`" />
+                </td>
                 <td class="text-center font-bold text-primary">{{ order.order_no }}</td>
-                <td class="truncate">{{ order.customer }}</td>
+                <td class="truncate">{{ order.customer }}
+                  <span v-if="order.bundle_orders.length" class="ml-1 px-1 text-caption font-bold text-primary border border-primary">묶음</span>
+                  <span v-else-if="bundleCandidates.has(order.id)" class="ml-1 px-1 text-caption text-warning border border-warning" title="같은 배송지의 출고대기 주문이 있습니다">묶음 가능</span>
+                </td>
                 <td class="text-right">{{ order.items.length }}종</td>
                 <td class="text-center truncate" :class="order.carrier_error ? 'text-danger font-bold' : ''">{{ order.carrier_error ? '오류' : (order.carrier_status || '-') }}</td>
               </tr>
@@ -97,6 +111,11 @@
             <button v-if="selected.waybill_no" class="btn btn-sm" :disabled="isSaving" @click="track">배송 조회</button>
             <button v-if="!selected.waybill_no && selected.status === '출고대기'" class="btn btn-sm btn-primary" @click="openWaybill">운송장 발급</button>
           </CarrierPanel>
+          <div v-if="selected.bundle_orders.length" class="alert alert-info flex items-center gap-2">
+            <span class="flex-1">묶음배송 (운송장 하나로 함께 보냄): {{ selected.bundle_orders.join(', ') }}
+              <span class="font-normal">· 대표 {{ selected.bundle_orders[0] }}</span></span>
+            <button v-if="selected.status === '출고대기'" class="btn btn-sm" :disabled="isSaving" @click="unbundle">묶음 해제</button>
+          </div>
           <div v-if="selected.note" class="alert alert-info">비고: {{ selected.note }}</div>
           <table class="data-table">
             <thead>
@@ -141,6 +160,7 @@ import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import ShippingLabelModal from '../../components/ShippingLabelModal.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import AddressImportModal from '../../components/AddressImportModal.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
@@ -163,10 +183,27 @@ const labelOrder = ref(null)
 const filter = ref({ q: '', start_date: '', end_date: '' })
 const isFiltered = computed(() => !!(filter.value.q || filter.value.start_date || filter.value.end_date))
 const editingId = ref(null)
+const importOpen = ref(false)
+const checkedIds = ref([])
+
+// 묶음배송: 출고대기이고 아직 묶이지 않은 주문만 고를 수 있습니다.
+const canBundle = (order) => order.status === '출고대기' && order.bundle_orders.length === 0
+const addressKey = (o) => [o.contact_name, (o.contact_phone || '').replace(/\D/g, ''), o.zipcode, o.address, o.address_detail]
+  .map(v => String(v || '').trim().replace(/\s+/g, ' ')).join('|')
+// 같은 배송지로 가는 다른 출고대기 주문이 있는 주문 (목록에 "묶음 가능" 표시)
+const bundleCandidates = computed(() => {
+  const groups = new Map()
+  for (const order of orders.value.filter(o => canBundle(o) && o.address)) {
+    const key = addressKey(order)
+    groups.set(key, [...(groups.get(key) || []), order.id])
+  }
+  return new Set([...groups.values()].filter(ids => ids.length > 1).flat())
+})
 const linesLocked = ref(false)
 
 const loadOrders = async () => {
   orders.value = await store.fetchOrders({ status: statusFilter.value, ...filter.value })
+  checkedIds.value = checkedIds.value.filter(id => orders.value.some(o => o.id === id && canBundle(o)))
   if (selected.value) selected.value = orders.value.find(o => o.id === selected.value.id) || null
 }
 
@@ -249,6 +286,37 @@ const track = async () => {
     toast.addToast(res.data.message, 'info')
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '배송 조회 중 오류가 발생했습니다.'), 'error', 5000)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+const bundleOrders = async () => {
+  const picked = orders.value.filter(o => checkedIds.value.includes(o.id))
+  if (!(await dialog.confirm(`${picked.map(o => o.order_no).join(', ')}\n${picked.length}건을 운송장 하나로 묶습니다. 대표 주문은 가장 먼저 등록한 주문이고, 나머지 주문의 송장은 취소합니다.`, { title: '묶음배송', okText: '묶기' }))) return
+  isSaving.value = true
+  try {
+    const res = await axios.post('/api/inventory/orders/bundle/', { ids: checkedIds.value })
+    toast.addToast(res.data.message, 'success', 6000)
+    checkedIds.value = []
+    await loadOrders()
+    selected.value = orders.value.find(o => o.id === res.data.order.id) || res.data.order
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '묶음배송 처리 중 오류가 발생했습니다.'), 'error', 6000)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+const unbundle = async () => {
+  if (!(await dialog.confirm('묶음을 풀고 대표 주문을 뺀 나머지 주문에 운송장을 새로 발급합니다.', { title: '묶음 해제', okText: '해제' }))) return
+  isSaving.value = true
+  try {
+    const res = await axios.post(`/api/inventory/orders/${selected.value.id}/unbundle/`)
+    toast.addToast(res.data.message, 'success', 6000)
+    await loadOrders()
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '묶음 해제 중 오류가 발생했습니다.'), 'error', 6000)
   } finally {
     isSaving.value = false
   }

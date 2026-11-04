@@ -139,6 +139,8 @@ class SalesOrder(ShippingInfo):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    # 묶음배송: 같은 곳으로 가는 주문을 대표 주문의 운송장 하나로 보냅니다.
+    bundle_parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='bundle_members')
 
     def __str__(self):
         return self.order_no

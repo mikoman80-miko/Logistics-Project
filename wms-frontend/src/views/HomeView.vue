@@ -301,7 +301,7 @@ import { ref, computed, onActivated, watch, nextTick } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useToastStore } from '../stores/toastStore';
 import axios from 'axios';
-import { downloadCsv } from '../utils/csv';
+import { downloadXlsx } from '../utils/excel';
 import { apiErrorMessage } from '../utils/apiError';
 import { playBeep } from '../utils/beep';
 import Barcode from '../components/Barcode.vue';
@@ -397,9 +397,9 @@ const handleBatchDelete = async () => {
 
 const downloadInventoryCSV = () => {
   if (filteredItems.value.length === 0) return toast.addToast('데이터 없음', 'error');
-  const headers = ['SKU', '상품명', '보관구역', '재고수량'];
-  const rows = filteredItems.value.map(item => [item.sku, item.name, item.location_name || '', item.quantity]);
-  downloadCsv('재고현황.csv', headers, rows);
+  const headers = ['상품코드', '상품명', '보관 위치', '현재 재고', '안전 재고'];
+  const rows = filteredItems.value.map(item => [item.sku, item.name, item.location_name || '', item.quantity, item.safety_stock]);
+  downloadXlsx(`재고현황_${new Date().toLocaleDateString('sv-SE')}`, '재고현황', headers, rows);
 };
 
 const focusSerialInput = async () => { if (scanSku.value) { await nextTick(); serialInputRef.value?.focus(); serialInputRef.value?.select(); } };

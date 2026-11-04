@@ -49,9 +49,9 @@
                   class="btn btn-success ml-2">신규
                   등록</button>
 
-                <input type="file" ref="csvInput" accept=".csv" class="hidden" @change="handleCsvUpload" />
+                <input type="file" ref="csvInput" :accept="EXCEL_ACCEPT" class="hidden" @change="handleCsvUpload" />
                 <button type="button" @click="$refs.csvInput.click()"
-                  class="btn btn-warning ml-1">CSV
+                  class="btn btn-warning ml-1" title="첫 줄 제목: SKU, 상품명, 초기수량, 구분 (xlsx 또는 csv)">엑셀
                   일괄 업로드</button>
                 <!-- 🌟 NEW: ABC 분석 실행 버튼 -->
                 <button type="button" @click="runABCAnalysis"
@@ -198,6 +198,7 @@ import axios from 'axios';
 import { useToastStore } from '../../stores/toastStore';
 import { apiErrorMessage } from '../../utils/apiError';
 import { useDialogStore } from '../../stores/dialogStore';
+import { EXCEL_ACCEPT, toCsvFile } from '../../utils/excel';
 
 const items = ref([]);
 const locations = ref([]);
@@ -335,14 +336,15 @@ const submitTransfer = async () => {
 const handleCsvUpload = async (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  const formData = new FormData();
-  formData.append('file', file);
   try {
+    // 엑셀 파일도 서버가 받는 csv로 바꿔 올립니다.
+    const formData = new FormData();
+    formData.append('file', await toCsvFile(file));
     const res = await axios.post('/api/inventory/items/upload_csv/', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
     toast.addToast(res.data.message, 'success');
     await fetchItems();
   } catch (err) {
-    toast.addToast(err.response?.data?.error || 'CSV 업로드 중 오류가 발생했습니다.', 'error');
+    toast.addToast(apiErrorMessage(err, '파일을 읽지 못했습니다. 첫 줄 제목(SKU, 상품명, 초기수량, 구분)을 확인하세요.'), 'error', 6000);
   } finally { event.target.value = ''; }
 };
 

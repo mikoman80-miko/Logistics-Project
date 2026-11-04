@@ -861,3 +861,64 @@ class SerialHistoryAndLocationBarcodeTests(BaseCase):
         self.client.post(f'{ITEMS}scan_serial/', {'sku': 'P-1', 'serial_number': 'SN9', 'type': 'in'}, format='json')
         serial = ItemSerial.objects.get(serial_number='SN9')
         self.assertEqual([e['detail'] for e in self.client.get(f'{SERIALS}{serial.id}/history/').data['events']], ['시리얼 직접 입고 S/N SN9'])
+
+
+class AccountAndMyWorkTests(BaseCase):
+    URL = '/api/account/password/'
+
+    def test_change_password(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(self.URL, {'current_password': 'wrong', 'new_password': 'Better-pass-77'}).status_code, 400)
+        self.assertEqual(self.client.post(self.URL, {'current_password': 'pw-strong-2', 'new_password': '1234'}).status_code, 400)
+        res = self.client.post(self.URL, {'current_password': 'pw-strong-2', 'new_password': 'Better-pass-77'})
+        self.assertEqual(res.status_code, 200, res.data)
+        self.worker.refresh_from_db()
+        self.assertTrue(self.worker.check_password('Better-pass-77'))
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post(self.URL, {}).status_code, 401)
+
+    def test_mine_filter_shows_only_my_logs(self):
+        InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=1, user=self.worker)
+        InventoryLog.objects.create(item=self.item, action='OUT', quantity_changed=-1, user=self.admin)
+        self.client.force_authenticate(self.worker)
+        rows = self.client.get(LOGS, {'mine': '1'}).data['results']
+        self.assertEqual([r['user_name'] for r in rows], ['worker'])
+
+
+class AddressImportTests(BaseCase):
+    URL = '/api/inventory/orders/import_addresses/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='c', contact_name='김수령', contact_phone='010-1111-2222', zipcode='06236', address='옛 주소')
+        SalesOrder.objects.create(order_no='ORD-2', customer='c', status='출고완료')
+
+    def rows(self):
+        base = {'contact_name': '김수령', 'contact_phone': '010-1111-2222', 'zipcode': '06236', 'address_detail': ''}
+        return [
+            {'order_no': 'ORD-1', **base, 'address': '새 주소'},
+            {'order_no': 'ORD-2', **base, 'address': '아무 주소'},
+            {'order_no': 'ORD-X', **base, 'address': '아무 주소'},
+            {'order_no': 'ORD-1', **base, 'zipcode': '12', 'address': '새 주소'},
+        ]
+
+    def test_preview_then_apply(self):
+        res = self.client.post(self.URL, {'rows': self.rows()}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual([r['status'] for r in res.data['rows']], ['ok', 'error', 'error', 'error'])
+        self.assertIn('주소: 옛 주소 → 새 주소', res.data['rows'][0]['changes'])
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.address, '옛 주소')  # 미리보기는 저장하지 않습니다.
+
+        res = self.client.post(self.URL, {'rows': self.rows()[:1], 'apply': True}, format='json')
+        self.assertEqual(res.data['counts']['saved'], 1)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.address, '새 주소')
+        res = self.client.post(self.URL, {'rows': self.rows()[:1]}, format='json')
+        self.assertEqual(res.data['rows'][0]['status'], 'unchanged')
+
+    def test_rejects_empty_and_worker(self):
+        self.assertEqual(self.client.post(self.URL, {'rows': []}, format='json').status_code, 400)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(self.URL, {'rows': self.rows()}, format='json').status_code, 403)

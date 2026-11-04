@@ -14,6 +14,7 @@
         권한: {{ authStore.user?.role }}
         <button @click="handleLogout"
           class="btn btn-link btn-sm ml-1.5">로그아웃</button>
+        <button @click="passwordOpen = true" class="btn btn-link btn-sm">비밀번호 변경</button>
       </div>
 
       <div class="p-2 border-b border-line">
@@ -65,6 +66,7 @@
   </div>
 
   <AppDialog />
+  <PasswordChangeModal v-if="passwordOpen" @close="passwordOpen = false" />
 
   <div class="fixed bottom-[30px] right-[30px] z-[9999] flex flex-col gap-2.5 pointer-events-none print:hidden">
     <transition-group enter-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
@@ -87,6 +89,7 @@ import { useAuthStore } from './stores/auth'
 import { useTabStore } from './stores/tabStore'
 import { useToastStore } from './stores/toastStore'
 import AppDialog from './components/AppDialog.vue'
+import PasswordChangeModal from './components/PasswordChangeModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -122,6 +125,7 @@ const menuGroups = [
 ]
 
 const menuOpen = ref(false)
+const passwordOpen = ref(false)
 const openMenu = (path) => { router.push(path) }
 watch(() => route.path, () => { menuOpen.value = false })
 

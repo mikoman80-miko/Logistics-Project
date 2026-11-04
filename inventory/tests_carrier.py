@@ -265,3 +265,52 @@ class OrderEditCarrierTests(CarrierCase):
         issues = res.data['carrier_issues']
         self.assertEqual(issues['count'], 1)
         self.assertIn('주소를 확인할 수 없습니다', issues['items'][0]['reason'])
+
+
+class BundleShippingTests(CarrierCase):
+    def setUp(self):
+        super().setUp()
+        self.ids = [self.create_order().data['id'] for _ in range(3)]
+
+    def test_bundle_ships_with_one_waybill_and_collects_after_all_shipped(self):
+        res = self.client.post(f'{ORDERS}bundle/', {'ids': self.ids[:2]}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        master, member = SalesOrder.objects.filter(pk__in=self.ids[:2]).order_by('created_at', 'id')
+        self.assertEqual(member.bundle_parent, master)
+        self.assertEqual(member.waybill_no, master.waybill_no)
+        self.assertEqual(res.data['order']['bundle_orders'], [master.order_no, member.order_no])
+
+        SalesOrderItem.objects.filter(order__in=[master, member]).update(picked_quantity=1)
+        res = self.client.post(f'{ORDERS}{member.id}/complete/')
+        self.assertIn('나머지 주문을 모두 출고하면', res.data['message'])
+        self.assertEqual(self.mock_ready(master.waybill_no), 0)
+        self.client.post(f'{ORDERS}{master.id}/complete/')
+        self.assertEqual(self.mock_ready(master.waybill_no), 1)
+
+        # 대표 주문의 배송 단계가 묶인 주문에도 반영됩니다.
+        self.advance(master.waybill_no)
+        res = self.client.post(f'{ORDERS}{member.id}/track/')
+        self.assertEqual(res.data['order']['carrier_status'], '집하')
+        self.assertEqual([e['status'] for e in res.data['order']['carrier_events']], ['접수', '집하'])
+
+    def mock_ready(self, waybill_no):
+        with self.mock.store() as conn:
+            return conn.execute('SELECT ready FROM shipments WHERE waybill_no=?', (waybill_no,)).fetchone()['ready']
+
+    def test_bundle_rules_and_unbundle(self):
+        other = self.create_order(**{**ADDRESS, 'address_detail': '202호'}).data['id']
+        self.assertEqual(self.client.post(f'{ORDERS}bundle/', {'ids': [self.ids[0], other]}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(f'{ORDERS}bundle/', {'ids': [self.ids[0]]}, format='json').status_code, 400)
+        self.client.post(f'{ORDERS}bundle/', {'ids': self.ids}, format='json')
+        master = SalesOrder.objects.get(pk=self.ids[0])
+        # 대표 주문은 바로 취소할 수 없고, 배송지도 바꿀 수 없습니다.
+        self.assertEqual(self.client.post(f'{ORDERS}{master.id}/cancel/').status_code, 400)
+        self.assertEqual(self.client.post(f'{ORDERS}{self.ids[1]}/edit/', {'address': '다른 곳'}, format='json').status_code, 400)
+        # 묶인 주문을 취소하면 묶음에서만 빠집니다.
+        self.assertEqual(self.client.post(f'{ORDERS}{self.ids[2]}/cancel/').status_code, 200)
+        self.assertIsNone(SalesOrder.objects.get(pk=self.ids[2]).bundle_parent)
+        res = self.client.post(f'{ORDERS}{self.ids[1]}/unbundle/')
+        self.assertEqual(res.status_code, 200, res.data)
+        member = SalesOrder.objects.get(pk=self.ids[1])
+        self.assertIsNone(member.bundle_parent)
+        self.assertTrue(member.waybill_no and member.waybill_no != master.waybill_no)
