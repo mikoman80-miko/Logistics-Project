@@ -160,11 +160,23 @@ def update_shipping_address(record, serializer_class, data):
         serializer.save()
 
 
+class PageOnRequest(PageNumberPagination):
+    """page를 보낸 요청만 나눠서 돌려줍니다. ({count, results}) 현장 화면처럼 전체 목록(배열)을 쓰는 곳은 그대로 둡니다."""
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if 'page' not in request.query_params:
+            return None
+        return super().paginate_queryset(queryset, request, view)
+
+
 def filter_documents(queryset, params, date_field, search_fields, date_only=False):
-    """발주·주문·반품 목록 공통 조건: 상태, 검색어(q), 등록일 기간(start_date ~ end_date)."""
-    status_value = params.get('status')
-    if status_value:
-        queryset = queryset.filter(status=status_value)
+    """발주·주문·반품 목록 공통 조건: 상태(쉼표로 여러 개), 검색어(q), 등록일 기간(start_date ~ end_date)."""
+    statuses = [s for s in (params.get('status') or '').split(',') if s]
+    if statuses:
+        queryset = queryset.filter(status__in=statuses)
     keyword = (params.get('q') or '').strip()
     if keyword:
         condition = Q()
@@ -772,6 +784,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item__location', 'items__received_serials').order_by('-order_date', '-id')
     serializer_class = PurchaseOrderSerializer
     permission_classes = [IsAdminRole]
+    pagination_class = PageOnRequest
     # 입고 이력과 어긋나지 않도록 등록 후에는 수정, 삭제 대신 취소만 허용합니다.
     http_method_names = ['get', 'post', 'head', 'options']
 
@@ -946,11 +959,15 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     ).order_by('-created_at', '-id')
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
+    pagination_class = PageOnRequest
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        return filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
-                                ['order_no', 'customer', 'contact_name', 'waybill_no', 'items__item__sku', 'items__item__name'])
+        queryset = filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
+                                    ['order_no', 'customer', 'contact_name', 'waybill_no', 'items__item__sku', 'items__item__name'])
+        if self.request.query_params.get('item'):  # 이 상품이 들어 있는 주문 (반품 등록에서 원래 주문 고르기)
+            queryset = queryset.filter(items__item_id=to_int(self.request.query_params['item'])).distinct()
+        return queryset
 
     def perform_create(self, serializer):
         order = serializer.save(created_by=self.request.user)
@@ -1293,6 +1310,7 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
     queryset = ReturnOrder.objects.select_related('serial', 'item', 'sales_order').prefetch_related('carrier_events').order_by('-created_at', '-id')
     serializer_class = ReturnOrderSerializer
     permission_classes = [IsAdminRole]
+    pagination_class = PageOnRequest
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
@@ -1497,9 +1515,28 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class ItemSerialViewSet(viewsets.ModelViewSet):
-    queryset = ItemSerial.objects.select_related('item', 'location').order_by('-updated_at')
+    queryset = ItemSerial.objects.select_related('item', 'location').order_by('-updated_at', '-id')
     serializer_class = ItemSerialSerializer
     permission_classes = [IsAdminRole]
+    pagination_class = PageOnRequest
+
+    def get_queryset(self):
+        # 시리얼은 기기 수만큼 늘어나므로 서버에서 거릅니다. ?q=시리얼·상품코드·상품명 &status= &quality= &item=
+        queryset = super().get_queryset()
+        if self.action != 'list':
+            return queryset
+        params = self.request.query_params
+        statuses = [s for s in (params.get('status') or '').split(',') if s]
+        if statuses:
+            queryset = queryset.filter(status__in=statuses)
+        if params.get('quality'):
+            queryset = queryset.filter(quality=params['quality'])
+        if params.get('item'):
+            queryset = queryset.filter(item_id=to_int(params['item']))
+        keyword = (params.get('q') or '').strip()
+        if keyword:
+            queryset = queryset.filter(Q(serial_number__icontains=keyword) | Q(item__sku__icontains=keyword) | Q(item__name__icontains=keyword))
+        return queryset
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):

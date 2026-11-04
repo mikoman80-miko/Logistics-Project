@@ -98,7 +98,8 @@ const prompt = computed(() => {
 })
 
 const load = async () => {
-  const res = await axios.get('/api/inventory/purchase-orders/')
+  // 입고할 발주서만 받습니다. (끝난 발주서는 계속 쌓이므로)
+  const res = await axios.get('/api/inventory/purchase-orders/', { params: { status: '발주대기,입고중' } })
   poList.value = res.data.filter(row => row.status === '발주대기' || row.status === '입고중').reverse()
 }
 

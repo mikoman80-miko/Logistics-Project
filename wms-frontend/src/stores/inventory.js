@@ -56,6 +56,10 @@ export const useInventoryStore = defineStore('inventory', () => {
   // params: { status, q, start_date, end_date } 중 값이 있는 것만 보냅니다.
   const listParams = (params = {}) => Object.fromEntries(Object.entries(params).filter(([, value]) => value))
 
+  // 목록을 페이지로 나눠 받습니다. { count, results }
+  const fetchPage = async (url, params, page, pageSize = 50) =>
+    (await axios.get(url, { params: { ...listParams(params), page, page_size: pageSize } })).data
+
   const fetchOrders = async (params) => {
     const response = await axios.get('/api/inventory/orders/', { params: listParams(params) })
     return response.data
@@ -81,7 +85,6 @@ export const useInventoryStore = defineStore('inventory', () => {
 
   const completeReturn = async (id, status, quality, detail) => {
     const response = await axios.post(`/api/inventory/returns/${id}/complete/`, { status, quality, detail })
-    await fetchSerials()
     return response.data
   }
 
@@ -130,14 +133,13 @@ export const useInventoryStore = defineStore('inventory', () => {
     await axios.patch('/api/inventory/serials/batch_update/', {
       ids, status, quality
     })
-    await fetchSerials()
   }
 
   return { 
     items, fetchItems, fetchLogs, downloadLogs, addItem, updateQuantity, 
     updateItemDetails, deleteItem, scanSerial, serials, fetchSerials, batchUpdateSerials,
     adjustStock, locations, fetchLocations,
-    fetchOrders, createOrder, cancelOrder, completeOrder,
+    fetchPage, fetchOrders, createOrder, cancelOrder, completeOrder,
     fetchReturns, createReturn, cancelReturn, completeReturn,
     totalQuantity, totalSkuCount, lowStockItems 
   }

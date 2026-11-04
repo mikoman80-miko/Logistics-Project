@@ -1539,3 +1539,30 @@ class LowStockAlertTests(BaseCase):
         low = [c.args[0] for c in alert.call_args_list if c.args[0].startswith('[재고 부족]')]
         self.assertEqual(len(low), 2)
         self.assertIn('입고 예정 20개', low[1])
+
+
+class ListPagingTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        for n in range(7):
+            order = SalesOrder.objects.create(order_no=f'ORD-P{n}', customer=f'고객{n}', status='출고완료' if n % 2 else '출고대기')
+            SalesOrderItem.objects.create(order=order, item=self.item if n < 5 else self.other, quantity=1)
+
+    def test_page_only_when_requested(self):
+        self.assertIsInstance(self.client.get(ORDERS).data, list)  # 현장 화면은 그대로 배열
+        data = self.client.get(ORDERS, {'page': 2, 'page_size': 3}).data
+        self.assertEqual((data['count'], len(data['results'])), (7, 3))
+        self.assertEqual(self.client.get(ORDERS, {'page': 9, 'page_size': 3}).status_code, 404)
+
+    def test_status_list_and_item_filter(self):
+        self.assertEqual(len(self.client.get(ORDERS, {'status': '출고대기,출고완료'}).data), 7)
+        shipped_with_item = self.client.get(ORDERS, {'status': '출고완료', 'item': self.item.id}).data
+        self.assertEqual(sorted(o['order_no'] for o in shipped_with_item), ['ORD-P1', 'ORD-P3'])
+
+    def test_serial_search(self):
+        for n in range(3):
+            ItemSerial.objects.create(item=self.item, serial_number=f'SN-{n}', status='출고완료' if n else '재고보유')
+        data = self.client.get(SERIALS, {'status': '출고완료', 'q': 'sn-', 'page': 1}).data
+        self.assertEqual((data['count'], sorted(s['serial_number'] for s in data['results'])), (2, ['SN-1', 'SN-2']))
+        self.assertEqual(len(self.client.get(SERIALS, {'q': 'A-1'}).data), 3)  # 상품코드로도 찾음

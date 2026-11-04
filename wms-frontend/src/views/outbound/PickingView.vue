@@ -41,7 +41,7 @@
     </div>
 
     <ShippingLabelModal v-if="labelOrder" :order="labelOrder" @close="labelOrder = null" />
-    <AddressImportModal v-if="importOpen" @close="importOpen = false" @saved="loadOrders" />
+    <AddressImportModal v-if="importOpen" @close="importOpen = false" @saved="loadOrders()" />
     <PickListPrintModal v-if="pickListOpen" :orders="pickOrders" @close="pickListOpen = false" />
 
     <div class="page-split">
@@ -58,7 +58,7 @@
             <button class="btn btn-primary btn-sm" @click="openForm">주문 등록</button>
           </div>
         </div>
-        <ListFilter :model="filter" placeholder="주문번호, 고객, 운송장, 상품" @apply="loadOrders" />
+        <ListFilter :model="filter" placeholder="주문번호, 고객, 운송장, 상품" @apply="loadOrders(1)" />
         <div class="toolbar px-2.5 py-1.5 border-b border-line bg-surface-head">
           <span class="text-muted">선택 {{ checkedIds.length }}건</span>
           <button class="btn btn-sm" :disabled="checkedIds.length < 2 || isSaving" title="받는 분과 배송지가 같은 출고대기 주문을 운송장 하나로 보냅니다" @click="bundleOrders">묶음배송</button>
@@ -98,6 +98,7 @@
             </tbody>
           </table>
         </div>
+        <Pager :count="orderCount" :page="page" @change="loadOrders" />
       </div>
 
       <div v-if="selected" class="panel flex-1">
@@ -168,6 +169,7 @@ import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
 import AddressImportModal from '../../components/AddressImportModal.vue'
 import PickListPrintModal from '../../components/PickListPrintModal.vue'
+import Pager from '../../components/Pager.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 import { apiErrorMessage } from '../../utils/apiError'
@@ -217,8 +219,15 @@ const bundleCandidates = computed(() => {
 })
 const linesLocked = ref(false)
 
-const loadOrders = async () => {
-  orders.value = await store.fetchOrders({ status: statusFilter.value, ...filter.value })
+// 주문은 계속 쌓이므로 50건씩 나눠 불러옵니다. (다른 곳에서 부르면 지금 페이지를 다시 읽음)
+const page = ref(1)
+const orderCount = ref(0)
+const loadOrders = async (toPage = page.value) => {
+  const data = await store.fetchPage('/api/inventory/orders/', { status: statusFilter.value, ...filter.value }, toPage)
+  if (!data.results.length && toPage > 1) return loadOrders(toPage - 1)  // 마지막 페이지가 비면 앞으로
+  orders.value = data.results
+  orderCount.value = data.count
+  page.value = toPage
   checkedIds.value = checkedIds.value.filter(id => orders.value.some(o => o.id === id && canBundle(o)))
   if (selected.value) selected.value = orders.value.find(o => o.id === selected.value.id) || null
 }
@@ -368,7 +377,7 @@ let keepSelection = false
 watch(statusFilter, () => {
   if (keepSelection) return (keepSelection = false)  // 아래 onActivated가 직접 조회합니다.
   selected.value = null
-  loadOrders()
+  loadOrders(1)
 })
 
 // 다른 화면에서 /orders?q=주문번호 로 들어오면 그 주문을 찾아 엽니다.
@@ -381,7 +390,7 @@ onActivated(async () => {
     keepSelection = true
     statusFilter.value = ''
   }
-  await loadOrders()
+  await loadOrders(1)
   if (orders.value.length === 1) selected.value = orders.value[0]
 })
 </script>

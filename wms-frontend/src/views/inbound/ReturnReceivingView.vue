@@ -16,9 +16,10 @@
             <label class="flex items-center gap-1"><input v-model="mode" type="radio" value="serial" /> 시리얼 기기</label>
             <label class="flex items-center gap-1"><input v-model="mode" type="radio" value="quantity" /> 수량 상품 (시리얼 없음)</label>
           </div>
-          <label v-if="mode === 'serial'" class="field-label">출고된 시리얼
-            <select v-model="form.serial" class="field w-full mt-1" required>
-              <option :value="null" disabled>{{ shippedSerials.length ? '시리얼 선택' : '출고 완료된 시리얼이 없습니다' }}</option>
+          <label v-if="mode === 'serial'" class="field-label">출고된 시리얼 <span class="font-normal text-muted">(최근 {{ SERIAL_LIMIT }}개, 없으면 검색)</span>
+            <input v-model="serialQuery" class="field w-full mt-1" placeholder="시리얼, 상품코드, 상품명 검색" aria-label="시리얼 검색" @input="searchSerials" />
+            <select v-model="form.serial" class="field w-full mt-1" aria-label="반품할 시리얼" required>
+              <option :value="null" disabled>{{ shippedSerials.length ? '시리얼 선택' : '찾는 출고 시리얼이 없습니다' }}</option>
               <option v-for="serial in shippedSerials" :key="serial.id" :value="serial.id">
                 {{ serial.serial_number }} ({{ serial.item_name }})
               </option>
@@ -27,7 +28,7 @@
           <template v-else>
             <div class="grid grid-cols-[1fr_110px] gap-2">
               <label class="field-label">상품
-                <select v-model="form.item" class="field w-full mt-1" required @change="form.sales_order = null">
+                <select v-model="form.item" class="field w-full mt-1" required @change="loadOrdersWithItem">
                   <option :value="null" disabled>상품 선택</option>
                   <option v-for="item in quantityItems" :key="item.id" :value="item.id">[{{ item.sku }}] {{ item.name }}</option>
                 </select>
@@ -89,7 +90,7 @@
           <button class="btn btn-success btn-sm" @click="router.push('/work/return')">현장 화면에서 회수</button>
         </div>
       </div>
-      <ListFilter :model="filter" placeholder="반품번호, 고객, 시리얼, 운송장, 상품" @apply="load" />
+      <ListFilter :model="filter" placeholder="반품번호, 고객, 시리얼, 운송장, 상품" @apply="load(1)" />
       <div class="panel-body-flush">
         <table class="data-table">
           <thead>
@@ -127,6 +128,7 @@
           </tbody>
         </table>
       </div>
+      <Pager :count="returnCount" :page="page" @change="load" />
     </div>
   </div>
 </template>
@@ -140,6 +142,7 @@ import { apiErrorMessage } from '../../utils/apiError'
 import ShippingAddressFields from '../../components/ShippingAddressFields.vue'
 import CarrierPanel from '../../components/CarrierPanel.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import Pager from '../../components/Pager.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import axios from 'axios'
 
@@ -160,20 +163,47 @@ const emptyAddress = () => ({ contact_name: '', contact_phone: '', zipcode: '', 
 const form = ref({ customer: '', reason: RETURN_REASONS[0], serial: null, ...emptyAddress() })
 const detail = ref(null)
 const pickupForm = ref(emptyAddress())
-const shippedSerials = computed(() => store.serials.filter(s => s.status === '출고완료'))
+// 반품은 50건씩 나눠 불러옵니다.
+const page = ref(1)
+const returnCount = ref(0)
+const load = async (toPage = page.value) => {
+  const data = await store.fetchPage('/api/inventory/returns/', { status: statusFilter.value, ...filter.value }, toPage)
+  if (!data.results.length && toPage > 1) return load(toPage - 1)
+  returns.value = data.results
+  returnCount.value = data.count
+  page.value = toPage
+}
 
-const load = async () => {
-  returns.value = await store.fetchReturns({ status: statusFilter.value, ...filter.value })
+// 출고한 시리얼과 주문은 계속 늘어나므로 전부 받지 않고, 최근 것과 검색 결과만 받습니다.
+const SERIAL_LIMIT = 50
+const shippedSerials = ref([])
+const serialQuery = ref('')
+let serialTimer
+const fetchShippedSerials = async () => {
+  const data = await store.fetchPage('/api/inventory/serials/', { status: '출고완료', q: serialQuery.value.trim() }, 1, SERIAL_LIMIT)
+  shippedSerials.value = data.results
+  if (!shippedSerials.value.some(s => s.id === form.value.serial)) form.value.serial = null
+}
+const searchSerials = () => {
+  clearTimeout(serialTimer)
+  serialTimer = setTimeout(fetchShippedSerials, 300)
 }
 
 const mode = ref('serial')
-const shippedOrders = ref([])
 const quantityItems = computed(() => store.items.filter(item => !item.serial_tracked))
-const ordersWithItem = computed(() => shippedOrders.value.filter(order => order.items.some(line => line.item === form.value.item)))
+const ordersWithItem = ref([])
+const loadOrdersWithItem = async () => {
+  form.value.sales_order = null
+  ordersWithItem.value = form.value.item
+    ? (await store.fetchPage('/api/inventory/orders/', { status: '출고완료', item: form.value.item }, 1, 100)).results
+    : []
+}
 
 const openForm = async () => {
-  await Promise.all([store.fetchSerials(), store.fetchItems()])
-  shippedOrders.value = await store.fetchOrders({ status: '출고완료' })
+  serialQuery.value = ''
+  ordersWithItem.value = []
+  form.value = { serial: null }
+  await Promise.all([fetchShippedSerials(), store.fetchItems()])
   mode.value = shippedSerials.value.length ? 'serial' : 'quantity'
   form.value = { customer: '', reason: RETURN_REASONS[0], serial: null, item: null, quantity: 1, sales_order: null, ...emptyAddress() }
   isFormOpen.value = true
@@ -189,7 +219,7 @@ const submitReturn = async () => {
     else toast.addToast(`반품 ${created.return_no} 등록 완료${created.waybill_no ? ` (회수 운송장 ${created.waybill_no})` : ''}`, 'success')
     isFormOpen.value = false
     statusFilter.value = '회수대기'
-    await load()
+    await load(1)
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '반품 등록 중 오류가 발생했습니다.'), 'error', 5000)
   } finally {
@@ -235,7 +265,7 @@ const cancelReturn = async (row) => {
   }
 }
 
-watch(statusFilter, load)
+watch(statusFilter, () => load(1))
 
 // 다른 화면에서 /returns?q=반품번호 로 들어오면 그 반품을 찾아 상세를 엽니다.
 onActivated(async () => {
@@ -245,7 +275,7 @@ onActivated(async () => {
     router.replace({ query: {} })
     statusFilter.value = ''
   }
-  await load()
+  await load(q ? 1 : page.value)
   if (q && returns.value.length === 1) openDetail(returns.value[0])
 })
 </script>

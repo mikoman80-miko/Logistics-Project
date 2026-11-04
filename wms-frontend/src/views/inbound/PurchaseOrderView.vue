@@ -1,6 +1,6 @@
 <template>
   <div class="flex flex-col h-full">
-    <ReorderSuggestModal v-if="suggestOpen" @close="suggestOpen = false" @created="fetchPOs" />
+    <ReorderSuggestModal v-if="suggestOpen" @close="suggestOpen = false" @created="fetchPOs()" />
     <div v-if="isFormOpen" class="modal-overlay">
       <form class="modal w-[640px]" @submit.prevent="submitPO">
         <div class="modal-header">발주서 등록</div>
@@ -62,10 +62,10 @@
             </select>
             <button class="btn btn-sm" @click="suggestOpen = true">발주 제안</button>
             <button class="btn btn-primary btn-sm" @click="openForm">발주 등록</button>
-            <button class="btn btn-sm" @click="fetchPOs">새로고침</button>
+            <button class="btn btn-sm" @click="fetchPOs()">새로고침</button>
           </div>
         </div>
-        <ListFilter :model="filter" placeholder="발주번호, 거래처, 상품" @apply="fetchPOs" />
+        <ListFilter :model="filter" placeholder="발주번호, 거래처, 상품" @apply="fetchPOs(1)" />
         <div class="panel-body-flush">
           <table class="data-table">
             <thead>
@@ -87,6 +87,7 @@
             </tbody>
           </table>
         </div>
+        <Pager :count="poCount" :page="page" @change="fetchPOs" />
       </div>
 
       <div v-if="selected" class="panel flex-1">
@@ -139,6 +140,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { useInventoryStore } from '../../stores/inventory'
 import OrderLinesEditor from '../../components/OrderLinesEditor.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import Pager from '../../components/Pager.vue'
 import ReorderSuggestModal from '../../components/ReorderSuggestModal.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import { apiErrorMessage } from '../../utils/apiError'
@@ -162,10 +164,15 @@ const activeSuppliers = computed(() => suppliers.value.filter(s => s.is_active))
 
 const statusClass = (status) => ({ 입고완료: 'text-success', 입고중: 'text-primary', 발주대기: 'text-warning' }[status] || 'text-muted')
 
-const fetchPOs = async () => {
-  const params = Object.fromEntries(Object.entries({ status: statusFilter.value, ...filter.value }).filter(([, value]) => value))
-  const res = await axios.get('/api/inventory/purchase-orders/', { params })
-  poList.value = res.data
+// 발주서는 50건씩 나눠 불러옵니다.
+const page = ref(1)
+const poCount = ref(0)
+const fetchPOs = async (toPage = page.value) => {
+  const data = await store.fetchPage('/api/inventory/purchase-orders/', { status: statusFilter.value, ...filter.value }, toPage)
+  if (!data.results.length && toPage > 1) return fetchPOs(toPage - 1)
+  poList.value = data.results
+  poCount.value = data.count
+  page.value = toPage
   if (selected.value) selected.value = poList.value.find(p => p.id === selected.value.id) || null
 }
 
@@ -240,7 +247,7 @@ const cancelPO = async () => {
   }
 }
 
-watch(statusFilter, fetchPOs)
+watch(statusFilter, () => fetchPOs(1))
 
 // 오늘 할 일의 재고 부족 카드에서 /purchase-order?suggest=1 로 들어오면 발주 제안을 엽니다.
 // 다른 화면에서 /purchase-order?q=발주번호 로 들어오면 그 발주서를 찾아 엽니다.
@@ -252,7 +259,7 @@ onActivated(async () => {
     filter.value = { q, start_date: '', end_date: '' }
     statusFilter.value = ''
   }
-  await fetchPOs()
+  await fetchPOs(q ? 1 : page.value)
   if (q && poList.value.length === 1) selected.value = poList.value[0]
 })
 </script>

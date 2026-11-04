@@ -46,7 +46,7 @@
             <td class="text-right">
               <button
                 class="btn btn-primary"
-                @click="fetchData">새로고침</button>
+                @click="fetchData()">새로고침</button>
             </td>
           </tr>
         </tbody>
@@ -87,7 +87,7 @@
             @click="applyBatchUpdate">적용</button>
         </div>
         <div class="text-body">
-          <span class="total-count">총 <strong>{{ filteredSerials.length }}</strong> 건</span>
+          <span class="total-count">총 <strong>{{ serialCount.toLocaleString() }}</strong> 건</span>
         </div>
       </div>
 
@@ -181,29 +181,31 @@ const selectedIds = ref([])
 const batchStatus = ref('')
 const batchQuality = ref('')
 
-const fetchData = async () => {
-  await store.fetchSerials()
+// 시리얼은 기기 수만큼 늘어나므로 검색·필터·페이지 나누기를 서버에서 합니다.
+const paginatedSerials = ref([])
+const serialCount = ref(0)
+const fetchData = async (page = currentPage.value) => {
+  const params = {
+    q: searchQuery.value.trim(),
+    status: filterStatus.value === 'ALL' ? '' : filterStatus.value,
+    quality: filterQuality.value === 'ALL' ? '' : filterQuality.value,
+  }
+  const data = await store.fetchPage('/api/inventory/serials/', params, page, itemsPerPage.value)
+  if (!data.results.length && page > 1) return fetchData(page - 1)
+  paginatedSerials.value = data.results
+  serialCount.value = data.count
+  currentPage.value = page
 }
 
-const filteredSerials = computed(() => {
-  if (!store.serials) return []
-  return store.serials.filter(s => {
-    const matchQuery = s.serial_number.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      s.item_sku.toLowerCase().includes(searchQuery.value.toLowerCase())
-    const matchStatus = filterStatus.value === 'ALL' || s.status === filterStatus.value
-    const matchQuality = filterQuality.value === 'ALL' || s.quality === filterQuality.value
-    return matchQuery && matchStatus && matchQuality
-  })
+let searchTimer
+watch(searchQuery, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => fetchData(1), 300)  // 입력이 멈추면 검색
 })
+watch([filterStatus, filterQuality], () => fetchData(1))
 
-watch([searchQuery, filterStatus, filterQuality], () => { currentPage.value = 1 })
-
-const totalPages = computed(() => Math.ceil(filteredSerials.value.length / itemsPerPage.value) || 1)
-const paginatedSerials = computed(() => {
-  const start = (currentPage.value - 1) * itemsPerPage.value
-  return filteredSerials.value.slice(start, start + itemsPerPage.value)
-})
-const changePage = (page) => { if (page >= 1 && page <= totalPages.value) currentPage.value = page }
+const totalPages = computed(() => Math.ceil(serialCount.value / itemsPerPage.value) || 1)
+const changePage = (page) => { if (page >= 1 && page <= totalPages.value) fetchData(page) }
 
 const isAllSelected = computed(() => paginatedSerials.value.length > 0 && paginatedSerials.value.every(s => selectedIds.value.includes(s.id)))
 const toggleSelectAll = (event) => {
@@ -225,6 +227,7 @@ const applyBatchUpdate = async () => {
   batchStatus.value = ''
   batchQuality.value = ''
   toast.addToast('일괄 변경을 완료했습니다.', 'success')
+  await fetchData()
 }
 
 const rowClass = (serial) => {
