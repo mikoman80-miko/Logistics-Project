@@ -9,12 +9,15 @@ export const useLocationCheck = () => {
   const verified = ref([])  // 위치를 확인한 품목 줄 id
 
   // ending: 위치 뒤에 붙는 안내 ('에 보관합니다', '에서 꺼냅니다')
-  const check = (code, line, ending = '에 보관합니다') => {
+  // places: 맞는 자리로 인정할 위치 [{ barcode, location_name }]. 없으면 상품의 기본 위치 하나입니다.
+  const check = (code, line, ending = '에 보관합니다', places = null) => {
     if (!line) return fail('먼저 상품 바코드를 스캔하세요. 그다음 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.')
-    if (!line.location_barcode) return fail(`[${line.item_name}] 보관 위치가 지정되지 않은 상품입니다. 관리자에게 위치 지정을 요청하세요.`)
-    if (code !== line.location_barcode) return fail(`다른 위치입니다. 이 상품은 ${line.location_name}${ending}.`)
+    const accepted = places?.length ? places : line.location_barcode ? [{ barcode: line.location_barcode, location_name: line.location_name }] : []
+    if (!accepted.length) return fail(`[${line.item_name}] 보관 위치가 지정되지 않은 상품입니다. 관리자에게 위치 지정을 요청하세요.`)
+    const match = accepted.find(place => place.barcode === code)
+    if (!match) return fail(`다른 위치입니다. 이 상품은 ${accepted.map(place => place.location_name).join(', ')}${ending}.`)
     if (!verified.value.includes(line.id)) verified.value.push(line.id)
-    ok(`위치 확인: ${line.location_name}`)
+    ok(`위치 확인: ${match.location_name}`)
   }
   const isVerified = (line) => !!line && verified.value.includes(line.id)
   const reset = () => { verified.value = [] }

@@ -63,6 +63,18 @@ class Item(models.Model):
     def __str__(self):
         return f"[{self.sku}] {self.name}"
 
+class ItemStock(models.Model):
+    """위치별 재고. 상품의 총재고(Item.quantity)에서 위치별 합을 뺀 나머지는 '위치 미지정' 재고입니다."""
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='stocks')
+    location = models.ForeignKey(WarehouseLocation, on_delete=models.PROTECT, related_name='stocks')
+    quantity = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['item', 'location'], name='unique_item_location_stock')]
+
+    def __str__(self):
+        return f'{self.item.sku} @ {self.location.full_code}: {self.quantity}'
+
 # 🌟 NEW: 거래처(공급사) 모델
 class Supplier(models.Model):
     name = models.CharField(max_length=100)

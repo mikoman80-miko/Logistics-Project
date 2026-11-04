@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import InventoryLog, Item, ItemSerial, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import InventoryLog, Item, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -209,6 +209,7 @@ class ReportTests(BaseCase):
     def test_dashboard(self):
         loc = WarehouseLocation.objects.create(zone='A', rack='1')
         Item.objects.filter(pk=self.item.pk).update(location=loc)
+        ItemStock.objects.create(item=self.item, location=loc, quantity=5)
         InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=3)
         res = self.client.get('/api/inventory/dashboard/')
         self.assertEqual(res.data['trend'][0]['inbound'], 3)
@@ -1030,10 +1031,12 @@ class ScanAuditTests(BaseCase):
         super().setUp()
         self.client.force_authenticate(self.admin)
         self.loc = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
-        Item.objects.filter(pk=self.item.pk).update(location=self.loc)  # 수량 상품 A-1 (재고 5)
+        Item.objects.filter(pk=self.item.pk).update(location=self.loc)  # 수량 상품 A-1 (재고 5, 이 위치)
+        ItemStock.objects.create(item=self.item, location=self.loc, quantity=5)
         self.product = Item.objects.create(sku='P-1', name='본품', quantity=3, location=self.loc)
+        ItemStock.objects.create(item=self.product, location=self.loc, quantity=3)
         for no in ('SN1', 'SN2', 'SN3'):
-            ItemSerial.objects.create(item=self.product, serial_number=no)
+            ItemSerial.objects.create(item=self.product, serial_number=no, location=self.loc)
         ItemSerial.objects.create(item=self.product, serial_number='SN-OUT', status='출고완료')
 
     def scan(self, codes, **extra):
@@ -1046,7 +1049,7 @@ class ScanAuditTests(BaseCase):
         self.assertEqual((rows['A-1']['system'], rows['A-1']['counted']), (5, 3))
         self.assertEqual((rows['P-1']['system'], rows['P-1']['counted'], rows['P-1']['missing'], rows['P-1']['unexpected']),
                          (3, 3, ['SN3'], ['SN-OUT (출고완료)']))
-        self.assertTrue(rows['B-1']['other_location'])  # 다른 위치(미지정) 상품도 보여주지만 반영하지 않습니다.
+        self.assertTrue(rows['B-1']['new_here'])  # 이 위치에 기록이 없던 상품 (미지정 재고 1개)
         self.assertEqual(res.data['unknown'], ['NOPE'])
         self.assertEqual(len(res.data['warnings']), 1)  # 시리얼 상품을 상품코드로 스캔
         self.item.refresh_from_db()
@@ -1061,6 +1064,9 @@ class ScanAuditTests(BaseCase):
         self.assertEqual((self.item.quantity, self.other.quantity, self.product.quantity), (2, 1, 2))
         self.assertEqual(ItemSerial.objects.get(serial_number='SN3').status, '분실')
         self.assertEqual(InventoryLog.objects.filter(item=self.item).latest('id').quantity_changed, -3)
+        # B-1은 위치를 모르던 1개를 여기서 찾은 것이라 총재고는 그대로 두고 위치만 기록합니다.
+        self.assertEqual(ItemStock.objects.get(item=self.other, location=self.loc).quantity, 1)
+        self.assertFalse(InventoryLog.objects.filter(item=self.other).exists())
 
     def test_rules(self):
         self.assertEqual(self.client.post(self.URL, {'codes': []}, format='json').status_code, 400)
@@ -1127,3 +1133,75 @@ class OverduePurchaseOrderTests(BaseCase):
         with patch('inventory.management.commands.notify_overdue.send_webhook_alert') as send:
             call_command('notify_overdue', stdout=StringIO())
         send.assert_not_called()
+
+
+class LocationStockTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.a = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        self.b = WarehouseLocation.objects.create(zone='B', rack='R1', tier=1)
+        Item.objects.filter(pk=self.item.pk).update(location=self.a)
+        self.item.refresh_from_db()
+        ItemStock.objects.create(item=self.item, location=self.a, quantity=5)
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=0, location=self.a)
+
+    def stocks(self, item):
+        return {s.location.full_code: s.quantity for s in ItemStock.objects.filter(item=item, quantity__gt=0).select_related('location')}
+
+    def test_receive_to_default_or_scanned_location(self):
+        po = PurchaseOrder.objects.create(po_number='PO-1')
+        PurchaseOrderItem.objects.create(po=po, item=self.product, order_quantity=2)
+        PurchaseOrderItem.objects.create(po=po, item=self.item, order_quantity=3)
+        url = f'{POS}{po.id}/receive_inbound/'
+        self.client.post(url, {'sku': 'P-1', 'serial_number': 'SN1'}, format='json')
+        self.client.post(url, {'sku': 'P-1', 'serial_number': 'SN2', 'location': self.b.id}, format='json')
+        self.client.post(url, {'sku': 'A-1', 'quantity': 3, 'location': self.b.id}, format='json')
+        self.assertEqual(self.stocks(self.product), {'A-R1-1단': 1, 'B-R1-1단': 1})
+        self.assertEqual(ItemSerial.objects.get(serial_number='SN2').location, self.b)
+        self.assertEqual(self.stocks(self.item), {'A-R1-1단': 5, 'B-R1-1단': 3})
+        # 입고 취소는 그 기기가 있던 위치에서 뺍니다.
+        self.client.post(f'{POS}{po.id}/cancel_receipt/', {'sku': 'P-1', 'serial_number': 'SN2'}, format='json')
+        self.assertEqual(self.stocks(self.product), {'A-R1-1단': 1})
+
+    def test_shipping_takes_from_serial_location_then_default(self):
+        ItemStock.objects.create(item=self.item, location=self.b, quantity=4)
+        Item.objects.filter(pk=self.item.pk).update(quantity=9)
+        order = SalesOrder.objects.create(order_no='ORD-1', customer='c')
+        SalesOrderItem.objects.create(order=order, item=self.item, quantity=7, picked_quantity=7)
+        self.assertEqual(self.client.post(f'{ORDERS}{order.id}/complete/').status_code, 200)
+        self.assertEqual(self.stocks(self.item), {'B-R1-1단': 2})  # 기본 위치 A에서 5개, 나머지 2개는 B에서
+
+        line = self.client.get(f'{ORDERS}{order.id}/').data['items'][0]
+        self.assertEqual([(s['location_name'], s['quantity']) for s in line['stock_locations']], [('B-R1-1단', 2)])
+
+    def test_move_stock_and_change_default(self):
+        res = self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 2}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(self.stocks(self.item), {'A-R1-1단': 3, 'B-R1-1단': 2})
+        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 9}, format='json').status_code, 400)
+        data = self.client.get(f'{ITEMS}{self.item.id}/').data
+        self.assertEqual(([s['location_name'] for s in data['stocks']], data['unassigned']), (['A-R1-1단', 'B-R1-1단'], 0))
+
+        # 시리얼 상품은 시리얼로 옮깁니다.
+        ItemSerial.objects.create(item=self.product, serial_number='SN1', location=self.a)
+        ItemStock.objects.create(item=self.product, location=self.a, quantity=1)
+        Item.objects.filter(pk=self.product.pk).update(quantity=1)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 1}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'serials': ['SN1']}, format='json').status_code, 200)
+        self.assertEqual(ItemSerial.objects.get(serial_number='SN1').location, self.b)
+
+        # 기본 위치를 바꾸면 그 위치에 있던 재고가 함께 옮겨집니다.
+        self.client.post(f'{ITEMS}{self.item.id}/transfer_location/', {'new_location_id': self.b.id}, format='json')
+        self.assertEqual(self.stocks(self.item), {'B-R1-1단': 5})
+
+    def test_location_with_stock_cannot_be_deleted(self):
+        Item.objects.filter(pk__in=[self.item.pk, self.product.pk]).update(location=self.b)  # 기본 위치는 모두 B로
+        self.assertEqual(self.client.delete(f'/api/inventory/locations/{self.a.id}/').status_code, 400)
+        self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 5}, format='json')
+        self.assertEqual(self.client.delete(f'/api/inventory/locations/{self.a.id}/').status_code, 204)
+
+    def test_adjust_and_return_follow_default_location(self):
+        self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -2}, format='json')
+        self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 4}, format='json')
+        self.assertEqual(self.stocks(self.item), {'A-R1-1단': 7})

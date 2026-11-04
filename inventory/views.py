@@ -28,9 +28,9 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from . import carrier
+from . import carrier, stock
 from .carrier import CarrierError
-from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -255,11 +255,14 @@ def change_serial_status(serial, new_status, quality=None, description='', user=
             return f'[{item.sku}] 재고가 0개라 상태를 변경할 수 없습니다.'
         item.quantity -= 1
         item.save(update_fields=['quantity'])
+        stock.remove(item, 1, prefer=serial.location)
+        serial.location = None  # 선반에서 빠진 기기
         InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=description[:200], user=user)
         alert_if_low_stock(item)
     elif is_in_stock and not was_in_stock:
         item.quantity += 1
         item.save(update_fields=['quantity'])
+        serial.location = stock.add(item, 1)  # 기본 위치로 되돌립니다.
         InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=description[:200], user=user)
 
     serial.status = new_status
@@ -365,7 +368,7 @@ class CategoryViewSet(viewsets.ModelViewSet):
 
 
 class ItemViewSet(viewsets.ModelViewSet):
-    queryset = Item.objects.select_related('category', 'location').filter(is_active=True).annotate(
+    queryset = Item.objects.select_related('category', 'location').prefetch_related('stocks__location').filter(is_active=True).annotate(
         in_stock_serials=Count('serials', filter=Q(serials__status=IN_STOCK)))
     serializer_class = ItemSerializer
     permission_classes = [IsAdminRole]
@@ -432,36 +435,53 @@ class ItemViewSet(viewsets.ModelViewSet):
             else:
                 unknown.append(code)
 
-        item_ids = set(Item.objects.filter(is_active=True, location=location).values_list('id', flat=True)) | set(counted)
+        # 이 위치에 재고가 있거나 기본 위치인 상품, 그리고 스캔한 상품을 대조합니다.
+        here = Q(location=location) | Q(serials__location=location, serials__status=IN_STOCK) | Q(stocks__location=location, stocks__quantity__gt=0)
+        item_ids = set(Item.objects.filter(here, is_active=True).values_list('id', flat=True)) | set(counted)
         rows = []
         for item in Item.objects.select_for_update().filter(pk__in=item_ids).select_related('location').order_by('sku'):
             row = {'item': item.id, 'sku': item.sku, 'name': item.name, 'serial_tracked': item.serial_tracked,
-                   'system': item.quantity, 'counted': counted[item.id], 'other_location': item.location_id != location.id,
-                   'location_name': item.location.full_code if item.location else '', 'missing': [], 'unexpected': []}
+                   'system': stock.at(item, location), 'counted': counted[item.id], 'missing': [], 'unexpected': [], 'moved': [],
+                   'location_name': item.location.full_code if item.location else '',
+                   # 이 위치에 기록이 없던 수량 상품: 반영하면 이 위치 재고로 더해집니다.
+                   'new_here': not item.serial_tracked and item.location_id != location.id and not stock.at(item, location)}
             if item.serial_tracked:
-                in_stock = list(item.serials.filter(status=IN_STOCK).order_by('serial_number'))
-                scanned = {no for no, s in seen_serials.items() if s.item_id == item.id}
-                row['missing'] = [s.serial_number for s in in_stock if s.serial_number not in scanned]
-                row['unexpected'] = [f'{no} ({s.status})' for no, s in seen_serials.items() if s.item_id == item.id and s.status != IN_STOCK]
-                row['system'] = len(in_stock)  # 시리얼 상품은 재고보유 시리얼 수와 비교합니다.
+                in_stock = list(item.serials.filter(status=IN_STOCK).select_related('location').order_by('serial_number'))
+                here_serials = [s for s in in_stock if s.location_id == location.id]
+                scanned = {no: s for no, s in seen_serials.items() if s.item_id == item.id}
+                row['system'] = len(here_serials)
+                row['missing'] = [s.serial_number for s in here_serials if s.serial_number not in scanned]
+                row['unexpected'] = [f'{no} ({s.status})' for no, s in scanned.items() if s.status != IN_STOCK]
+                row['moved'] = [f'{no} ({s.location.full_code if s.location else "위치 미지정"})' for no, s in scanned.items()
+                                if s.status == IN_STOCK and s.location_id != location.id]
             rows.append(row)
 
         applied = []
         if apply:
             note = f'스캔 재고 조사 ({location.full_code})'
             for row in rows:
-                if row['other_location']:
-                    continue  # 다른 위치 상품은 그 위치를 조사할 때 맞춥니다.
                 item = Item.objects.select_for_update().get(pk=row['item'])
-                if not item.serial_tracked and row['counted'] != item.quantity:
-                    diff = row['counted'] - item.quantity
-                    item.quantity = row['counted']
-                    item.save(update_fields=['quantity'])
-                    InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user)
-                    if diff < 0:
-                        alert_if_low_stock(item)
-                    applied.append(f'[{item.sku}] 수량 {diff:+d}')
-                elif item.serial_tracked and mark_missing:
+                if not item.serial_tracked:
+                    # 위치를 모르던(미지정) 재고를 여기서 찾은 것이면 총재고는 그대로 두고 이 위치로 옮깁니다.
+                    unknown_before = stock.unassigned(item)
+                    located = stock.set_at(item, location, row['counted'])
+                    diff = located - min(max(located, 0), unknown_before)
+                    if located:
+                        item.quantity = max(0, item.quantity + diff)
+                        item.save(update_fields=['quantity'])
+                        if diff:
+                            InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user)
+                        if diff < 0:
+                            alert_if_low_stock(item)
+                        applied.append(f'[{item.sku}] 이 위치 {located:+d}' + (f', 총재고 {diff:+d}' if diff != located else ''))
+                    continue
+                # 다른 위치로 기록된 기기가 여기 있으면 위치를 바로잡습니다.
+                for no, serial in seen_serials.items():
+                    if serial.item_id == item.id and serial.status == IN_STOCK and serial.location_id != location.id:
+                        stock.relocate_one(item, serial.location, location)
+                        ItemSerial.objects.filter(pk=serial.pk).update(location=location)
+                        applied.append(f'[{no}] 위치 정정')
+                if mark_missing:
                     for serial in ItemSerial.objects.select_for_update().filter(item=item, serial_number__in=row['missing'], status=IN_STOCK):
                         error = change_serial_status(serial, '분실', None, f'{note}: 분실 {serial.serial_number}', request.user)
                         if error:
@@ -479,11 +499,51 @@ class ItemViewSet(viewsets.ModelViewSet):
         if not new_location:
             return error_response('존재하지 않는 보관 위치입니다.', status.HTTP_404_NOT_FOUND)
 
-        old_location_str = item.location.full_code if item.location else '미지정'
+        item = Item.objects.select_for_update().get(pk=item.pk)
+        old_location = item.location
+        moved = stock.at(item, old_location) if old_location else stock.unassigned(item)
+        if moved:
+            stock.move(item, moved, old_location, new_location)
+        item.serials.filter(status=IN_STOCK, location=old_location).update(location=new_location)
         item.location = new_location
         item.save(update_fields=['location'])
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}]", user=request.user)
+        old_location_str = old_location.full_code if old_location else '미지정'
+        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개", user=request.user)
         return Response({'message': '보관 위치 이동 완료', 'location': new_location.full_code})
+
+    @action(detail=True, methods=['post'])
+    def move_stock(self, request, pk=None):
+        """위치 간 재고 이동. 수량 상품은 수량으로, 시리얼 상품은 옮길 시리얼 번호로 옮깁니다. from이 비어 있으면 '위치 미지정' 재고에서 옮깁니다."""
+        item = Item.objects.select_for_update().get(pk=self.get_object().pk)
+        source = WarehouseLocation.objects.filter(pk=to_int(request.data.get('from'))).first() if request.data.get('from') else None
+        target = WarehouseLocation.objects.filter(pk=to_int(request.data.get('to')), is_active=True).first()
+        if not target:
+            return error_response('옮길 보관 위치를 고르세요.')
+        if source == target:
+            return error_response('같은 위치로는 옮길 수 없습니다.')
+        if item.serial_tracked:
+            numbers = [clean_code(n) for n in (request.data.get('serials') or []) if clean_code(n)]
+            if not numbers:
+                return error_response('옮길 기기의 시리얼을 입력하세요.')
+            serials = list(item.serials.select_for_update().filter(serial_number__in=numbers, status=IN_STOCK, location=source))
+            missing = sorted(set(numbers) - {s.serial_number for s in serials})
+            if missing:
+                where = source.full_code if source else '위치 미지정'
+                return error_response(f'{where}에 있는 재고보유 기기가 아닙니다: {", ".join(missing)}')
+            quantity = len(serials)
+        else:
+            quantity = to_int(request.data.get('quantity'))
+            if not quantity or quantity < 1:
+                return error_response('옮길 수량을 입력하세요.')
+            serials = []
+        error = stock.move(item, quantity, source, target)
+        if error:
+            return error_response(error)
+        ItemSerial.objects.filter(id__in=[s.id for s in serials]).update(location=target)
+        where = source.full_code if source else '미지정'
+        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, user=request.user,
+                                    description=f'재고 이동: [{where}] ➔ [{target.full_code}] {quantity}개' + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''))
+        return Response({'message': f'[{item.sku}] {quantity}개를 {target.full_code}로 옮겼습니다.', 'item': self.get_serializer(item).data})
 
     def create(self, request, *args, **kwargs):
         # 사용 중지된 SKU를 다시 등록하면 기존 상품과 이력을 이어서 사용합니다.
@@ -493,6 +553,8 @@ class ItemViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(stopped, data=request.data)
         serializer.is_valid(raise_exception=True)
         item = serializer.save(is_active=True)
+        ItemStock.objects.filter(item=item).delete()  # 다시 등록한 수량으로 새로 시작합니다.
+        stock.add(item, item.quantity)
         InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, description='사용 중지 상품 재등록', user=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -509,6 +571,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         item = serializer.save()
+        stock.add(item, item.quantity)
         InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, user=self.request.user)
 
     def perform_update(self, serializer):
@@ -531,6 +594,10 @@ class ItemViewSet(viewsets.ModelViewSet):
                 raise ValidationError({'error': f'[{old.sku}] 재고보유 시리얼이 {in_stock}개라 수량을 {in_stock}개 미만으로 줄일 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.'})
         item = serializer.save()
         quantity_diff = item.quantity - old_quantity
+        if quantity_diff > 0:
+            stock.add(item, quantity_diff)
+        elif quantity_diff < 0:
+            stock.remove(item, -quantity_diff)
 
         if quantity_diff != 0:
             action_type = 'IN' if quantity_diff > 0 else 'OUT'
@@ -558,6 +625,7 @@ class ItemViewSet(viewsets.ModelViewSet):
             return error_response(f'재고가 부족합니다. (현재 {item.quantity}개)')
         item.quantity += change
         item.save(update_fields=['quantity'])
+        stock.add(item, change) if change > 0 else stock.remove(item, -change)
         InventoryLog.objects.create(item=item, action='IN' if change > 0 else 'OUT', quantity_changed=change, user=request.user)
         if change < 0:
             alert_if_low_stock(item)
@@ -585,18 +653,20 @@ class ItemViewSet(viewsets.ModelViewSet):
                 return error_response('이미 창고에 등록된 시리얼 번호입니다.')
             try:
                 with transaction.atomic():
-                    ItemSerial.objects.create(item=item, serial_number=serial_number, status=IN_STOCK)
+                    ItemSerial.objects.create(item=item, serial_number=serial_number, status=IN_STOCK, location=item.location)
             except IntegrityError:
                 return error_response('이미 창고에 등록된 시리얼 번호입니다.')
             item.quantity += 1
             item.save(update_fields=['quantity'])
+            stock.add(item, 1)
             InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user)
             return Response({'message': f'S/N [{serial_number}] 입고 완료'})
 
         serial_obj = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item, status=IN_STOCK).first()
         if not serial_obj or item.quantity < 1:
             return error_response('재고가 없거나 이미 출고되었습니다.')
-        serial_obj.status = '출고완료'
+        stock.remove(item, 1, prefer=serial_obj.location)
+        serial_obj.status, serial_obj.location = '출고완료', None
         serial_obj.save()
         item.quantity -= 1
         item.save(update_fields=['quantity'])
@@ -747,9 +817,16 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         remaining = po_item.order_quantity - po_item.received_quantity
         if receive_qty > remaining:
             return error_response(f'발주 수량을 초과합니다. (남은 수량 {remaining}개)')
+        # 현장에서 위치 라벨을 스캔해 다른 위치에 넣을 수 있습니다. 정하지 않으면 상품의 기본 위치입니다.
+        target = None
+        if request.data.get('location'):
+            target = WarehouseLocation.objects.filter(pk=to_int(request.data.get('location')), is_active=True).first()
+            if not target:
+                return error_response('넣을 보관 위치를 찾을 수 없습니다.')
+        target = target or master_item.location
 
         if serial_number:
-            ItemSerial.objects.create(item=master_item, serial_number=serial_number, status=IN_STOCK, po_item=po_item)
+            ItemSerial.objects.create(item=master_item, serial_number=serial_number, status=IN_STOCK, po_item=po_item, location=target)
 
         po_item.received_quantity += receive_qty
         po_item.save(update_fields=['received_quantity'])
@@ -757,7 +834,8 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         # 실제 마스터 재고 증가
         master_item.quantity += receive_qty
         master_item.save(update_fields=['quantity'])
-        description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '')
+        stock.add(master_item, receive_qty, target)
+        description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '') + (f" → {target.full_code}" if target else '')
         InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user)
 
         # 모든 품목 입고 완료 체크
@@ -809,6 +887,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         if item.quantity < cancel_qty:
             return error_response(f'재고가 부족해 취소할 수 없습니다. 이미 출고되었는지 확인해주세요. (현재 {item.quantity}개)')
 
+        stock.remove(item, cancel_qty, prefer=serial.location if serial else None)
         if serial:
             serial.delete()
         po_item.received_quantity -= cancel_qty
@@ -827,7 +906,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
     queryset = SalesOrder.objects.select_related('bundle_parent').prefetch_related(
-        'items__item__location', 'items__picked_serials__serial', 'carrier_events', 'bundle_members', 'bundle_parent__bundle_members', 'bundle_parent__carrier_events'
+        'items__item__location', 'items__item__stocks__location', 'items__picked_serials__serial', 'carrier_events', 'bundle_members', 'bundle_parent__bundle_members', 'bundle_parent__carrier_events'
     ).order_by('-created_at', '-id')
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
@@ -1133,8 +1212,11 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
             item = items[line.item_id]
             item.quantity -= line.quantity
             item.save(update_fields=['quantity'])
-            serial_ids = [pick.serial_id for pick in line.picked_serials.all()]
-            ItemSerial.objects.filter(id__in=serial_ids).update(status='출고완료', updated_at=timezone.now())
+            picked = [pick.serial for pick in line.picked_serials.all()]
+            for serial in picked:  # 시리얼은 그 기기가 있던 위치에서 뺍니다.
+                stock.remove(item, 1, prefer=serial.location)
+            stock.remove(item, line.quantity - len(picked))
+            ItemSerial.objects.filter(id__in=[s.id for s in picked]).update(status='출고완료', location=None, updated_at=timezone.now())
             InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고', user=request.user)
             alert_if_low_stock(item)
 
@@ -1256,6 +1338,7 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
         if result == 'restock':
             item.quantity += return_order.quantity
             item.save(update_fields=['quantity'])
+            stock.add(item, return_order.quantity)
             InventoryLog.objects.create(item=item, action='IN', quantity_changed=return_order.quantity, description=description[:200], user=request.user)
         return_order.status, return_order.result = '회수완료', label or ('재고로 되돌림' if result == 'restock' else '폐기')
         return_order.completed_at = timezone.now()
@@ -1330,7 +1413,7 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class ItemSerialViewSet(viewsets.ModelViewSet):
-    queryset = ItemSerial.objects.select_related('item').order_by('-updated_at')
+    queryset = ItemSerial.objects.select_related('item', 'location').order_by('-updated_at')
     serializer_class = ItemSerialSerializer
     permission_classes = [IsAdminRole]
 
@@ -1407,7 +1490,10 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
         # 지우면 상품의 위치가 조용히 비워지므로, 보관 중인 상품이 있으면 막습니다.
         count = instance.items.filter(is_active=True).count()
         if count:
-            raise ValidationError({'error': f'상품 {count}개가 이 위치에 보관 중이라 삭제할 수 없습니다. 상품을 다른 위치로 옮긴 뒤 삭제해 주세요.'})
+            raise ValidationError({'error': f'상품 {count}개의 기본 위치라 삭제할 수 없습니다. 상품의 위치를 바꾼 뒤 삭제해 주세요.'})
+        if instance.stocks.filter(quantity__gt=0).exists() or instance.serials.filter(status=IN_STOCK).exists():
+            raise ValidationError({'error': '이 위치에 재고가 남아 있어 삭제할 수 없습니다. 재고를 다른 위치로 옮긴 뒤 삭제해 주세요.'})
+        instance.stocks.all().delete()
         instance.delete()
 
 
@@ -1494,7 +1580,7 @@ class DashboardAPIView(APIView):
         trend_data = [{'date': row['day'].strftime('%Y-%m-%d'), 'inbound': row['inbound'] or 0, 'outbound': abs(row['outbound'] or 0)} for row in daily_logs]
 
         occupancy_dict = {zone: 0 for zone in WarehouseLocation.objects.filter(is_active=True).values_list('zone', flat=True)}
-        zone_totals = Item.objects.filter(is_active=True, location__is_active=True).values('location__zone').annotate(total=Sum('quantity'))
+        zone_totals = ItemStock.objects.filter(item__is_active=True, location__is_active=True).values('location__zone').annotate(total=Sum('quantity'))
         for row in zone_totals:
             occupancy_dict[row['location__zone']] = row['total'] or 0
         occupancy_data = [{'zone': k, 'quantity': v} for k, v in occupancy_dict.items()]

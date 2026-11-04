@@ -53,6 +53,8 @@
       </div>
     </div>
 
+    <MoveStockModal v-if="moveItem" :item="moveItem" @moved="store.fetchItems()" @close="moveItem = null" />
+
     <!-- 이력 조회 모달 -->
     <div v-if="selectedHistoryItem"
       class="modal-overlay print:hidden">
@@ -221,7 +223,7 @@
                 width="120">재고 조정</th>
               <th
                
-                width="240">관리 도구</th>
+                width="280">관리 도구</th>
             </tr>
           </thead>
           <tbody>
@@ -248,7 +250,8 @@
                 class="font-bold whitespace-nowrap overflow-hidden text-ellipsis">
                 {{ item.name }}</td>
               <td v-if="editingId !== item.id" class="text-center">{{
-                item.location_name || '-' }}</td>
+                item.location_name || '-' }}
+                <span v-if="item.stocks.length > 1 || item.unassigned" class="block text-caption text-muted truncate" :title="stockSummary(item)">{{ stockSummary(item) }}</span></td>
               <td class="text-right font-bold"
                 :class="{ 'text-danger': item.quantity === 0 }">
                 {{ item.quantity.toLocaleString() }}
@@ -274,6 +277,9 @@
                 <button
                   class="btn btn-link"
                   @click="openHistory(item)">[이력]</button>
+                <button
+                  class="btn btn-link"
+                  @click="moveItem = item">[이동]</button>
                 <button
                   class="btn btn-link"
                   @click="handleDeleteItem(item.id)">[삭제]</button>
@@ -305,6 +311,7 @@ import { downloadXlsx } from '../utils/excel';
 import { apiErrorMessage } from '../utils/apiError';
 import { playBeep } from '../utils/beep';
 import Barcode from '../components/Barcode.vue';
+import MoveStockModal from '../components/MoveStockModal.vue';
 import { useDialogStore } from '../stores/dialogStore';
 
 const store = useInventoryStore();
@@ -343,6 +350,9 @@ const closeBulkBarcode = () => {
 };
 
 const selectedHistoryItem = ref(null); const itemHistoryLogs = ref([]);
+const moveItem = ref(null);
+// 여러 위치에 나뉜 재고 요약: "A-R01-1단 10 · B-R02-2단 5 · 미지정 3"
+const stockSummary = (item) => [...item.stocks.map(s => `${s.location_name} ${s.quantity}`), ...(item.unassigned ? [`미지정 ${item.unassigned}`] : [])].join(' · ');
 const openHistory = async (item) => {
   selectedHistoryItem.value = item; itemHistoryLogs.value = [];
   const data = await store.fetchLogs({ item: item.id, page_size: 200 });

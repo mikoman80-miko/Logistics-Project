@@ -30,7 +30,7 @@ django.setup()
 from django.contrib.auth.models import User  # noqa: E402
 from django.core.management import call_command  # noqa: E402
 
-from inventory.models import Item, Supplier, WarehouseLocation  # noqa: E402
+from inventory.models import Item, ItemStock, Supplier, WarehouseLocation  # noqa: E402
 
 call_command('migrate', verbosity=0)
 call_command('flush', interactive=False, verbosity=0)
@@ -40,6 +40,7 @@ User.objects.create_user('e2e_worker', password='E2e-worker-pass!', first_name='
 shelf = WarehouseLocation.objects.create(zone='A', rack='R01', tier=1, description='테스트 선반')
 WarehouseLocation.objects.create(zone='B', rack='R02', tier=2)
 Supplier.objects.create(name='테스트공급사', contact_person='공급담당')
-Item.objects.create(sku='E2E-CABLE', name='테스트 케이블', item_type='부자재', serial_tracked=False, quantity=50, location=shelf)
+cable = Item.objects.create(sku='E2E-CABLE', name='테스트 케이블', item_type='부자재', serial_tracked=False, quantity=50, location=shelf)
+ItemStock.objects.create(item=cable, location=shelf, quantity=50)
 Item.objects.create(sku='E2E-DEV', name='테스트 단말기', item_type='상품', serial_tracked=True, quantity=0, location=shelf)
 print(f'테스트 DB 준비 완료: {db_name}')

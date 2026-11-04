@@ -322,6 +322,44 @@ test('사용자 등록과 사용 중지', async () => {
   await shot(admin, '19-users')
 })
 
+test('위치별 재고: 재고 이동, 다른 선반에 입고, 출고 위치 안내', async () => {
+  await admin.goto('/stock')
+  await orderRow(admin, 'E2E-CABLE').getByRole('button', { name: '[이동]' }).click()
+  const modal = admin.locator('.modal', { hasText: '재고 이동' })
+  await selectByText(modal.locator('label:has-text("어디로") select'), 'B-R02-2단')
+  await modal.locator('input[type=number]').fill('2')
+  await shot(admin, '25-move-stock')
+  await modal.getByRole('button', { name: '이동', exact: true }).click()
+  await toast(admin, '2개를 B-R02-2단로 옮겼습니다')
+  await expect(orderRow(admin, 'E2E-CABLE')).toContainText('B-R02-2단 2')
+
+  // 현장 입고: 기본 위치가 아닌 선반 라벨을 스캔하면 그 위치에 넣습니다.
+  const locations = await apiGet(worker, '/api/inventory/locations/')
+  const shelfB = locations.find(loc => loc.full_code === 'B-R02-2단')
+  await admin.goto('/purchase-order')
+  await admin.getByRole('button', { name: '발주 등록' }).click()
+  const po = admin.locator('.modal', { hasText: '발주서 등록' })
+  await selectByText(po.locator('select').first(), '테스트공급사')
+  await selectByText(po.locator('tbody select').first(), 'E2E-CABLE')
+  await po.locator('tbody input[type=number]').first().fill('1')
+  await po.getByRole('button', { name: '등록', exact: true }).click()
+  await toast(admin, '등록 완료')
+  const poNo = (await admin.getByText(/등록 완료/).first().textContent()).match(/PO-\d+-\d+/)[0]
+
+  await worker.goto('/work')
+  await worker.keyboard.press('1')
+  await worker.locator('button.work-row', { hasText: poNo }).click()
+  await scan(worker, shelfB.barcode)  // 선반 라벨 → 상품 순서
+  await expect(worker.getByText('다음 상품은 B-R02-2단에 넣습니다')).toBeVisible()
+  await scan(worker, 'E2E-CABLE')
+  await expect(worker.getByText('✔ 모든 품목 입고 완료')).toBeVisible()
+  await worker.getByRole('button', { name: '발주서 목록으로 (Enter)' }).click()
+
+  const items = await apiGet(worker, '/api/inventory/items/')
+  const cable = items.find(item => item.sku === 'E2E-CABLE')
+  expect(cable.stocks.find(s => s.location_name === 'B-R02-2단').quantity).toBe(3)
+})
+
 test('시리얼 없는 상품 반품: 원래 주문 선택 → 현장에서 상품 바코드로 회수', async () => {
   await admin.goto('/returns')
   await admin.getByRole('button', { name: '반품 등록' }).click()
@@ -386,7 +424,7 @@ test('스캔 재고 조사: 위치를 스캔해 대조하고 반영', async () =
   await shot(admin, '23-scan-audit')
   await panel.getByRole('button', { name: '조사 결과 반영' }).click()
   await admin.locator('.modal').getByRole('button', { name: '반영' }).click()
-  await toast(admin, '[E2E-CABLE] 수량')
+  await toast(admin, '[E2E-CABLE] 이 위치')
 })
 
 test('입고 예정일이 지난 발주를 오늘 할 일에서 열기', async () => {

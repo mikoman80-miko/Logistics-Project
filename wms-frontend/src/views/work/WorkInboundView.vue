@@ -26,13 +26,15 @@
           <div class="text-[80px] font-bold leading-tight">
             <span class="text-primary">{{ activeLine.received_quantity }}</span> / {{ activeLine.order_quantity }}개
           </div>
-          <div class="text-[44px] font-bold text-warning">📍 {{ activeLine.location_name || '위치 미지정' }}에 보관
+          <div class="text-[44px] font-bold text-warning">📍 {{ putaway[activeLine.id]?.full_code || activeLine.location_name || '위치 미지정' }}에 보관
+            <span v-if="putaway[activeLine.id]" class="text-primary text-3xl">(기본 위치 대신)</span>
             <span v-if="location.isVerified(activeLine)" class="text-success text-4xl">✔ 위치 확인</span>
           </div>
-          <div v-if="activeLine.location_barcode && !location.isVerified(activeLine)" class="text-2xl text-muted">선반의 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.</div>
+          <div v-if="!location.isVerified(activeLine)" class="text-2xl text-muted">다른 선반에 넣으려면 그 선반의 위치 라벨을 스캔하세요.</div>
         </div>
         <div v-else class="work-task justify-center items-center flex-1 text-[56px] font-bold text-muted">
           상품 바코드를 스캔하세요
+          <span v-if="pendingPlace" class="text-4xl text-primary mt-4">📍 다음 상품은 {{ pendingPlace.full_code }}에 넣습니다</span>
         </div>
         <div class="text-4xl font-bold text-center">{{ prompt }}</div>
         <ScanBox :paused="!!qtyLine || !!cancelLine" @scan="onScan" />
@@ -100,7 +102,29 @@ const load = async () => {
   poList.value = res.data.filter(row => row.status === '발주대기' || row.status === '입고중').reverse()
 }
 
+// 넣을 위치: 선반 라벨을 먼저 스캔하면 다음에 스캔하는 상품을, 상품 다음에 스캔하면 지금 상품을 그 위치에 넣습니다.
+const locations = ref([])
+const putaway = ref({})       // { 품목 줄 id: 위치 } (기본 위치가 아닐 때만)
+const pendingPlace = ref(null) // 다음에 스캔할 상품에 쓸 위치
+
+const placeLine = (line, target) => {
+  if (!target || target.barcode === line.location_barcode) delete putaway.value[line.id]
+  else putaway.value[line.id] = target
+}
+
+const scanLocation = (code) => {
+  const target = locations.value.find(loc => loc.barcode === code)
+  if (!target) return fail(`[${code}] 등록되지 않은 위치 라벨입니다.`)
+  pendingPlace.value = target
+  const line = activeLine.value
+  if (!line) return ok(`다음에 스캔하는 상품을 ${target.full_code}에 넣습니다`)
+  placeLine(line, target)
+  location.check(target.barcode, line, '에 보관합니다', [{ barcode: target.barcode, location_name: target.full_code }])
+}
+
 const receive = async (body) => {
+  const target = putaway.value[activeLine.value?.id]
+  if (target) body = { ...body, location: target.id }
   try {
     const res = await axios.post(`/api/inventory/purchase-orders/${po.value.id}/receive_inbound/`, body)
     po.value = res.data.po
@@ -132,9 +156,13 @@ watch(isComplete, async (done) => {
 })
 
 const onScan = async (code) => {
-  if (isLocationCode(code)) return location.check(code, activeLine.value, '에 보관합니다')
+  if (isLocationCode(code)) return scanLocation(code)
   const line = po.value.items.find(row => row.item_sku === code)
   if (line) {
+    if (pendingPlace.value) {
+      placeLine(line, pendingPlace.value)
+      pendingPlace.value = null
+    }
     contextSku.value = code
     if (line.serial_tracked) ok(`${line.item_name}: 시리얼을 스캔하세요`)
     else await receive({ sku: code, quantity: 1 })
@@ -157,9 +185,14 @@ const enterQuantity = async (quantity) => {
 const leave = async () => {
   po.value = null
   location.reset()
+  putaway.value = {}
+  pendingPlace.value = null
   contextSku.value = ''
   await load()
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  locations.value = (await axios.get('/api/inventory/locations/')).data.filter(loc => loc.is_active)
+})
 </script>

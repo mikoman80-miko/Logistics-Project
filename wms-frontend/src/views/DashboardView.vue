@@ -223,9 +223,10 @@ const topMovingItems = ref([]);
 
 const locationStats = computed(() => {
   const stats = {};
+  // 위치별 재고로 셉니다. 위치에 기록되지 않은 수량은 '미지정'입니다.
   store.items.forEach(i => {
-    const loc = i.location_name || '미지정';
-    stats[loc] = (stats[loc] || 0) + i.quantity;
+    i.stocks.forEach(s => { stats[s.location_name] = (stats[s.location_name] || 0) + s.quantity; });
+    if (i.unassigned) stats['미지정'] = (stats['미지정'] || 0) + i.unassigned;
   });
   return Object.keys(stats).map(name => ({
     name,

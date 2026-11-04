@@ -17,10 +17,11 @@
         <template v-if="current">
           <div class="work-task">
             <div class="text-4xl text-muted">{{ doneLines }} / {{ order.items.length }} 품목 완료</div>
-            <div class="text-[64px] font-bold text-warning leading-tight">📍 {{ current.location_name || '위치 미지정' }}
+            <div class="text-[64px] font-bold text-warning leading-tight">📍 {{ pickPlace(current) }}
               <span v-if="location.isVerified(current)" class="text-success text-4xl align-middle">✔ 위치 확인</span>
             </div>
-            <div v-if="current.location_barcode && !location.isVerified(current)" class="text-2xl text-muted">선반의 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.</div>
+            <div v-if="current.stock_locations.length > 1" class="text-2xl text-muted">다른 위치에도 있습니다: {{ current.stock_locations.slice(1).map(p => `${p.location_name} ${p.quantity}개`).join(', ') }}</div>
+            <div v-if="pickPlaces(current).length && !location.isVerified(current)" class="text-2xl text-muted">선반의 위치 라벨을 스캔하면 맞는 자리인지 확인합니다.</div>
             <div class="text-[56px] font-bold leading-tight">{{ current.item_name }}</div>
             <div class="text-4xl font-mono">{{ current.item_sku }}</div>
             <div class="text-[80px] font-bold leading-tight">
@@ -55,7 +56,7 @@
             <span class="shrink-0">{{ line.picked_quantity }}/{{ line.quantity }}</span>
           </div>
           <div class="flex justify-between items-center mt-1 text-xl text-muted">
-            <span>{{ line.location_name || '위치 미지정' }}</span>
+            <span>{{ pickPlace(line) }}</span>
             <button v-if="line.picked_quantity > 0" class="work-link" @click="resetLine(line)">다시 스캔</button>
           </div>
         </div>
@@ -97,7 +98,10 @@ const isDone = (line) => line.picked_quantity >= line.quantity
 const totalQuantity = (row) => row.items.reduce((sum, line) => sum + line.quantity, 0)
 
 // 창고 안에서 짧게 움직이도록 보관 위치 순서로 안내합니다.
-const sortedLines = computed(() => [...(order.value?.items || [])].sort((a, b) => (a.location_name || '').localeCompare(b.location_name || '')))
+// 꺼낼 위치: 재고가 실제로 있는 위치(기본 위치 먼저, 많은 순). 기록이 없으면 기본 위치를 안내합니다.
+const pickPlaces = (line) => (line.stock_locations.length ? line.stock_locations : line.location_barcode ? [{ barcode: line.location_barcode, location_name: line.location_name }] : [])
+const pickPlace = (line) => pickPlaces(line)[0]?.location_name || '위치 미지정'
+const sortedLines = computed(() => [...(order.value?.items || [])].sort((a, b) => pickPlace(a).localeCompare(pickPlace(b))))
 const current = computed(() => sortedLines.value.find(line => !isDone(line)))
 const doneLines = computed(() => order.value.items.filter(isDone).length)
 const canEnterQuantity = computed(() => current.value && !current.value.serial_tracked && contextSku.value === current.value.item_sku)
@@ -118,7 +122,7 @@ const applyResult = (data) => {
 }
 
 const onScan = async (code) => {
-  if (isLocationCode(code)) return location.check(code, current.value, '에서 꺼냅니다')
+  if (isLocationCode(code)) return location.check(code, current.value, '에서 꺼냅니다', current.value && pickPlaces(current.value))
   try {
     const res = await axios.post(`/api/inventory/orders/${order.value.id}/scan/`, { code, sku: contextSku.value })
     const scannedSku = res.data.sku || (res.data.order.items.some(line => line.item_sku === code) ? code : contextSku.value)

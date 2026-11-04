@@ -58,6 +58,13 @@ class CarrierInfoMixin(serializers.Serializer):
         return carrier.CARRIER_NAME if obj.waybill_no else ''
 
 
+def stock_rows(item):
+    # 재고가 있는 위치 목록 (수량 많은 순, 기본 위치 먼저). 미리 불러온 stocks를 씁니다.
+    rows = [st for st in item.stocks.all() if st.quantity > 0]
+    rows.sort(key=lambda st: (st.location_id != item.location_id, -st.quantity))
+    return [{'location': st.location_id, 'location_name': st.location.full_code, 'barcode': st.location.barcode, 'quantity': st.quantity} for st in rows]
+
+
 def validate_unique_lines(lines):
     if not lines:
         raise serializers.ValidationError('품목을 1개 이상 입력해주세요.')
@@ -91,11 +98,20 @@ class ItemSerializer(serializers.ModelSerializer):
     quantity = serializers.IntegerField(min_value=0, required=False)
     safety_stock = serializers.IntegerField(min_value=0, required=False)
     in_stock_serials = serializers.SerializerMethodField()
+    stocks = serializers.SerializerMethodField()
+    unassigned = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
         fields = '__all__'
         read_only_fields = ['is_active']
+
+    def get_stocks(self, obj):
+        return stock_rows(obj)
+
+    def get_unassigned(self, obj):
+        # 위치에 기록되지 않은 재고 (예전 데이터나 기본 위치가 없는 상품)
+        return max(0, obj.quantity - sum(st.quantity for st in obj.stocks.all()))
 
     def get_in_stock_serials(self, obj):
         # 목록 조회에서는 미리 센 값을 쓰고, 등록·수정 응답에서는 직접 셉니다.
@@ -158,6 +174,7 @@ class SalesOrderItemSerializer(serializers.ModelSerializer):
     item_name = serializers.CharField(source='item.name', read_only=True)
     location_name = serializers.ReadOnlyField(source='item.location.full_code')
     location_barcode = serializers.ReadOnlyField(source='item.location.barcode')
+    stock_locations = serializers.SerializerMethodField()
     current_quantity = serializers.IntegerField(source='item.quantity', read_only=True)
     serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
     quantity = serializers.IntegerField(min_value=1)
@@ -167,6 +184,10 @@ class SalesOrderItemSerializer(serializers.ModelSerializer):
         model = SalesOrderItem
         exclude = ['order']
         read_only_fields = ['picked_quantity']
+
+    def get_stock_locations(self, obj):
+        # 현장 출고 안내: 이 상품이 실제로 있는 위치들 (첫 번째로 안내합니다)
+        return stock_rows(obj.item)
 
     def get_scanned_serials(self, obj):
         return [pick.serial.serial_number for pick in obj.picked_serials.all()]
@@ -266,6 +287,7 @@ class ReturnOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
         return ReturnOrder.objects.create(return_no=next_document_number(ReturnOrder, 'return_no', 'RTN'), **validated_data)
 
 class ItemSerialSerializer(serializers.ModelSerializer):
+    location_name = serializers.CharField(source='location.full_code', read_only=True, default='')
     item_sku = serializers.CharField(source='item.sku', read_only=True)
     item_name = serializers.CharField(source='item.name', read_only=True)
 

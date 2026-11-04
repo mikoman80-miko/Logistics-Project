@@ -110,6 +110,7 @@
               <th
                
                 width="100">물류 상태</th>
+              <th width="110">위치</th>
               <th
                
                 width="100">품질 등급</th>
@@ -120,7 +121,7 @@
           </thead>
           <tbody>
             <tr v-if="paginatedSerials.length === 0">
-              <td colspan="7" class="text-center">조회된 시리얼 데이터가 없습니다.</td>
+              <td colspan="8" class="text-center">조회된 시리얼 데이터가 없습니다.</td>
             </tr>
             <tr v-for="serial in paginatedSerials" :key="serial.id" class="is-clickable" :class="rowClass(serial)"
               title="누르면 이력을 봅니다" @click="historySerial = serial">
@@ -135,6 +136,7 @@
                 {{ serial.item_name }}</td>
               <td class="text-center font-bold"
                 :class="statusColor(serial.status)">{{ serial.status }}</td>
+              <td class="text-center font-mono">{{ serial.location_name || '-' }}</td>
               <td class="text-center font-bold"
                 :class="qualityColor(serial.quality)">{{ serial.quality }}</td>
               <td class="text-center">{{ new
