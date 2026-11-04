@@ -141,6 +141,8 @@ class SalesOrder(ShippingInfo):
     completed_at = models.DateTimeField(null=True, blank=True)
     # 묶음배송: 같은 곳으로 가는 주문을 대표 주문의 운송장 하나로 보냅니다.
     bundle_parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='bundle_members')
+    # 부분 출고: 남은 수량으로 새로 만든 주문이면 원래 주문
+    split_from = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='backorders')
 
     def __str__(self):
         return self.order_no
@@ -169,7 +171,8 @@ class ItemSerial(models.Model):
         ('재고보유', '재고보유'),
         ('출고완료', '출고완료'),
         ('AS진행중', 'AS진행중'),
-        ('불량폐기', '불량폐기')
+        ('불량폐기', '불량폐기'),
+        ('분실', '분실'),  # 재고 조사에서 찾지 못한 기기
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='재고보유')
     
@@ -208,7 +211,12 @@ class ReturnOrder(ShippingInfo):
     return_no = models.CharField(max_length=50, unique=True)
     customer = models.CharField(max_length=100)
     reason = models.CharField(max_length=100)
-    serial = models.ForeignKey(ItemSerial, on_delete=models.PROTECT, related_name='returns')
+    # 시리얼 관리 상품은 시리얼 1개, 그 외 상품은 상품과 수량으로 반품합니다.
+    serial = models.ForeignKey(ItemSerial, on_delete=models.PROTECT, null=True, blank=True, related_name='returns')
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True, related_name='returns')
+    quantity = models.PositiveIntegerField(default=1)
+    sales_order = models.ForeignKey('SalesOrder', on_delete=models.SET_NULL, null=True, blank=True, related_name='returns')  # 원래 출고한 주문
+    result = models.CharField(max_length=50, blank=True, default='')  # 회수 처리 결과 (예: 정상 (A급), 폐기)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='회수대기', db_index=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)

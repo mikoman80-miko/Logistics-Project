@@ -3,8 +3,12 @@
     <div class="panel flex-1">
       <div
         class="panel-header">
-        <span class="panel-title">재고 조사</span>
-        <div>
+        <div class="flex items-center gap-1">
+          <span class="panel-title mr-2">재고 조사</span>
+          <button class="tab" :class="{ 'is-active': mode === 'scan' }" @click="mode = 'scan'">스캔 조사</button>
+          <button class="tab" :class="{ 'is-active': mode === 'count' }" @click="mode = 'count'">수량 입력 조사</button>
+        </div>
+        <div v-if="mode === 'count'">
           <button
             class="btn"
             @click="fetchData">🔄 새로고침</button>
@@ -16,7 +20,12 @@
         </div>
       </div>
 
-      <div class="panel-body">
+      <div v-if="mode === 'scan'" class="panel-body">
+        <div class="alert alert-info">※ 위치를 고르고 그 선반의 물건을 하나씩 스캔한 뒤 [대조하기]를 누릅니다. 시리얼 상품은 기기의 시리얼을, 수량 상품은 상품코드를 개수만큼 스캔합니다.</div>
+        <ScanAuditPanel @applied="fetchData" />
+      </div>
+
+      <div v-else class="panel-body">
         <div class="alert alert-info">
           ※ 전산 재고와 실제 창고 재고(실물 재고)를 대조합니다. 실물 재고 칸에 숫자를 입력하면 오차가 자동 계산됩니다.<br />
           ※ 시리얼 관리 상품은 재고보유 시리얼 수보다 적게 입력할 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.
@@ -90,8 +99,10 @@ import { useInventoryStore } from '../../stores/inventory'
 import { apiErrorMessage } from '../../utils/apiError'
 import { useToastStore } from '../../stores/toastStore'
 import { useDialogStore } from '../../stores/dialogStore'
+import ScanAuditPanel from '../../components/ScanAuditPanel.vue'
 
 const store = useInventoryStore()
+const mode = ref('scan')
 const toast = useToastStore()
 const dialog = useDialogStore()
 const auditList = ref([])

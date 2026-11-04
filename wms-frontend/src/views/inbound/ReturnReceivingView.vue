@@ -12,16 +12,39 @@
               <option v-for="reason in RETURN_REASONS" :key="reason" :value="reason">{{ reason }}</option>
             </select>
           </label>
-          <label class="field-label">출고된 시리얼
+          <div class="flex gap-4">
+            <label class="flex items-center gap-1"><input v-model="mode" type="radio" value="serial" /> 시리얼 기기</label>
+            <label class="flex items-center gap-1"><input v-model="mode" type="radio" value="quantity" /> 수량 상품 (시리얼 없음)</label>
+          </div>
+          <label v-if="mode === 'serial'" class="field-label">출고된 시리얼
             <select v-model="form.serial" class="field w-full mt-1" required>
-              <option :value="null" disabled>시리얼 선택</option>
+              <option :value="null" disabled>{{ shippedSerials.length ? '시리얼 선택' : '출고 완료된 시리얼이 없습니다' }}</option>
               <option v-for="serial in shippedSerials" :key="serial.id" :value="serial.id">
                 {{ serial.serial_number }} ({{ serial.item_name }})
               </option>
             </select>
           </label>
+          <template v-else>
+            <div class="grid grid-cols-[1fr_110px] gap-2">
+              <label class="field-label">상품
+                <select v-model="form.item" class="field w-full mt-1" required @change="form.sales_order = null">
+                  <option :value="null" disabled>상품 선택</option>
+                  <option v-for="item in quantityItems" :key="item.id" :value="item.id">[{{ item.sku }}] {{ item.name }}</option>
+                </select>
+              </label>
+              <label class="field-label">수량
+                <input v-model.number="form.quantity" type="number" min="1" class="field field-num w-full mt-1" required />
+              </label>
+            </div>
+            <label class="field-label">원래 주문 <span class="font-normal text-muted">(고르면 그 주문에서 나간 수량까지만 반품하고, 배송지에서 회수합니다)</span>
+              <select v-model="form.sales_order" class="field w-full mt-1" :disabled="!form.item">
+                <option :value="null">고르지 않음</option>
+                <option v-for="order in ordersWithItem" :key="order.id" :value="order.id">{{ order.order_no }} · {{ order.customer }}</option>
+              </select>
+            </label>
+          </template>
           <div class="pt-2 border-t border-line">
-            <div class="font-bold mb-1.5">회수지 <span class="font-normal text-muted">비워 두면 그 기기를 출고한 주문의 배송지로 회수를 요청합니다.</span></div>
+            <div class="font-bold mb-1.5">회수지 <span class="font-normal text-muted">비워 두면 원래 출고한 주문의 배송지로 회수를 요청합니다.</span></div>
             <ShippingAddressFields :model="form" name-label="보내는 분(고객)" :required="false" />
           </div>
         </div>
@@ -74,7 +97,7 @@
               <th width="170">반품번호</th>
               <th width="160">고객</th>
               <th width="110">사유</th>
-              <th width="180">시리얼</th>
+              <th width="180">시리얼 / 수량</th>
               <th>상품명</th>
               <th width="90">상태</th>
               <th width="110">택배 회수</th>
@@ -89,9 +112,9 @@
               <td class="text-center font-bold text-primary">{{ row.return_no }}</td>
               <td class="truncate">{{ row.customer }}</td>
               <td class="text-center">{{ row.reason }}</td>
-              <td class="text-center font-mono">{{ row.serial_number }}</td>
+              <td class="text-center font-mono">{{ row.serial_number || `수량 ${row.quantity}개` }}</td>
               <td class="truncate">{{ row.item_name }}</td>
-              <td class="text-center font-bold">{{ row.status }}</td>
+              <td class="text-center font-bold" :title="row.result">{{ row.status }}<span v-if="row.result" class="block text-caption font-normal text-muted">{{ row.result }}</span></td>
               <td class="text-center">
                 <button class="btn btn-link" :class="row.carrier_error ? 'text-danger!' : ''" @click="openDetail(row)">
                   {{ row.carrier_error ? '요청 실패' : (row.carrier_status || (row.status === '회수대기' ? '요청하기' : '-')) }}
@@ -143,17 +166,25 @@ const load = async () => {
   returns.value = await store.fetchReturns({ status: statusFilter.value, ...filter.value })
 }
 
+const mode = ref('serial')
+const shippedOrders = ref([])
+const quantityItems = computed(() => store.items.filter(item => !item.serial_tracked))
+const ordersWithItem = computed(() => shippedOrders.value.filter(order => order.items.some(line => line.item === form.value.item)))
+
 const openForm = async () => {
-  await store.fetchSerials()
-  if (shippedSerials.value.length === 0) return toast.addToast('출고 완료된 시리얼이 없어 반품을 등록할 수 없습니다.', 'error')
-  form.value = { customer: '', reason: RETURN_REASONS[0], serial: null, ...emptyAddress() }
+  await Promise.all([store.fetchSerials(), store.fetchItems()])
+  shippedOrders.value = await store.fetchOrders({ status: '출고완료' })
+  mode.value = shippedSerials.value.length ? 'serial' : 'quantity'
+  form.value = { customer: '', reason: RETURN_REASONS[0], serial: null, item: null, quantity: 1, sales_order: null, ...emptyAddress() }
   isFormOpen.value = true
 }
 
 const submitReturn = async () => {
   isSaving.value = true
   try {
-    const created = await store.createReturn(form.value)
+    const { serial, item, quantity, sales_order, ...common } = form.value
+    const body = mode.value === 'serial' ? { ...common, serial } : { ...common, item, quantity, sales_order }
+    const created = await store.createReturn(body)
     if (created.carrier_error) toast.addToast(`반품 ${created.return_no} 등록 완료. 회수 요청 실패: ${created.carrier_error}`, 'error', 7000)
     else toast.addToast(`반품 ${created.return_no} 등록 완료${created.waybill_no ? ` (회수 운송장 ${created.waybill_no})` : ''}`, 'success')
     isFormOpen.value = false

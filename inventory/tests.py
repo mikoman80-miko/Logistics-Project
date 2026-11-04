@@ -986,3 +986,144 @@ class UserManagementTests(BaseCase):
         self.assertTrue(self.worker.check_password('Reset-pass-2026'))
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+
+class QuantityReturnTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='고객', status='출고완료', contact_name='김수령', address='서울')
+        SalesOrderItem.objects.create(order=self.order, item=self.item, quantity=3, picked_quantity=3)
+
+    def create(self, **data):
+        return self.client.post(RETURNS, {'customer': '고객', 'reason': '단순변심', **data}, format='json')
+
+    def test_register_with_order_limits_quantity_and_copies_address(self):
+        res = self.create(item=self.item.id, quantity=2, sales_order=self.order.id)
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual((res.data['item_sku'], res.data['quantity'], res.data['order_no'], res.data['contact_name']), ('A-1', 2, 'ORD-1', '김수령'))
+        self.assertEqual(self.create(item=self.item.id, quantity=2, sales_order=self.order.id).status_code, 400)  # 남은 1개만 가능
+        self.assertEqual(self.create(item=self.other.id, sales_order=self.order.id).status_code, 400)  # 주문에 없는 상품
+        self.assertEqual(self.create().status_code, 400)
+
+    def test_serial_item_must_use_serial(self):
+        product = Item.objects.create(sku='P-1', name='본품', quantity=0)
+        self.assertEqual(self.create(item=product.id).status_code, 400)
+
+    def test_restock_and_dispose(self):
+        restock = self.create(item=self.item.id, quantity=2).data['id']
+        dispose = self.create(item=self.item.id, quantity=1).data['id']
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.post(f'{RETURNS}{restock}/complete/', {}, format='json').status_code, 400)
+        self.assertEqual(self.client.post(f'{RETURNS}{restock}/complete/', {'result': 'restock'}, format='json').status_code, 200)
+        self.assertEqual(self.client.post(f'{RETURNS}{dispose}/complete/', {'result': 'dispose', 'label': '폐기'}, format='json').status_code, 200)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 7)  # 5 + 2, 폐기분은 재고에 넣지 않음
+        self.assertEqual(list(ReturnOrder.objects.order_by('id').values_list('result', flat=True)), ['재고로 되돌림', '폐기'])
+        self.assertEqual(self.client.post(f'{RETURNS}{restock}/complete/', {'result': 'restock'}, format='json').status_code, 400)
+
+
+class ScanAuditTests(BaseCase):
+    URL = f'{ITEMS}audit_scan/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.loc = WarehouseLocation.objects.create(zone='A', rack='R1', tier=1)
+        Item.objects.filter(pk=self.item.pk).update(location=self.loc)  # 수량 상품 A-1 (재고 5)
+        self.product = Item.objects.create(sku='P-1', name='본품', quantity=3, location=self.loc)
+        for no in ('SN1', 'SN2', 'SN3'):
+            ItemSerial.objects.create(item=self.product, serial_number=no)
+        ItemSerial.objects.create(item=self.product, serial_number='SN-OUT', status='출고완료')
+
+    def scan(self, codes, **extra):
+        return self.client.post(self.URL, {'location': self.loc.id, 'codes': codes, **extra}, format='json')
+
+    def test_preview_compares_counts_and_serials(self):
+        res = self.scan(['A-1', 'A-1', 'A-1', 'SN1', 'SN1', 'SN2', 'SN-OUT', 'P-1', 'B-1', 'NOPE'])
+        self.assertEqual(res.status_code, 200)
+        rows = {r['sku']: r for r in res.data['rows']}
+        self.assertEqual((rows['A-1']['system'], rows['A-1']['counted']), (5, 3))
+        self.assertEqual((rows['P-1']['system'], rows['P-1']['counted'], rows['P-1']['missing'], rows['P-1']['unexpected']),
+                         (3, 3, ['SN3'], ['SN-OUT (출고완료)']))
+        self.assertTrue(rows['B-1']['other_location'])  # 다른 위치(미지정) 상품도 보여주지만 반영하지 않습니다.
+        self.assertEqual(res.data['unknown'], ['NOPE'])
+        self.assertEqual(len(res.data['warnings']), 1)  # 시리얼 상품을 상품코드로 스캔
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 5)  # 미리보기는 바꾸지 않습니다.
+
+    def test_apply_adjusts_quantity_and_marks_missing(self):
+        res = self.scan(['A-1', 'A-1', 'SN1', 'SN2', 'B-1'], apply=True, mark_missing=True)
+        self.assertEqual(res.status_code, 200)
+        self.item.refresh_from_db()
+        self.other.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual((self.item.quantity, self.other.quantity, self.product.quantity), (2, 1, 2))
+        self.assertEqual(ItemSerial.objects.get(serial_number='SN3').status, '분실')
+        self.assertEqual(InventoryLog.objects.filter(item=self.item).latest('id').quantity_changed, -3)
+
+    def test_rules(self):
+        self.assertEqual(self.client.post(self.URL, {'codes': []}, format='json').status_code, 400)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.scan(['A-1']).status_code, 403)
+
+
+class PartialShipmentTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='고객', note='문 앞', contact_name='김수령', address='서울')
+        self.line_a = SalesOrderItem.objects.create(order=self.order, item=self.item, quantity=3, picked_quantity=2)
+        self.line_b = SalesOrderItem.objects.create(order=self.order, item=self.other, quantity=1, picked_quantity=0)
+
+    def complete(self, **data):
+        return self.client.post(f'{ORDERS}{self.order.id}/complete/', data, format='json')
+
+    def test_partial_ships_scanned_and_creates_backorder(self):
+        self.assertEqual(self.complete().status_code, 400)  # 보통 출고는 모두 스캔해야 합니다.
+        res = self.complete(partial=True)
+        self.assertEqual(res.status_code, 200, res.data)
+        self.order.refresh_from_db()
+        self.item.refresh_from_db()
+        self.other.refresh_from_db()
+        self.assertEqual(self.order.status, '출고완료')
+        self.assertEqual([(l.item_id, l.quantity) for l in self.order.items.all()], [(self.item.id, 2)])
+        self.assertEqual((self.item.quantity, self.other.quantity), (3, 1))
+        back = SalesOrder.objects.get(split_from=self.order)
+        self.assertIn(back.order_no, res.data['message'])
+        self.assertEqual((back.status, back.contact_name, back.note), ('출고대기', '김수령', 'ORD-1의 남은 수량 / 문 앞'))
+        self.assertEqual(sorted((l.item_id, l.quantity) for l in back.items.all()), sorted([(self.item.id, 1), (self.other.id, 1)]))
+        self.assertEqual(self.client.get(f'{ORDERS}{back.id}/').data['split_from_no'], 'ORD-1')
+
+    def test_partial_needs_a_scan_and_no_bundle(self):
+        SalesOrderItem.objects.filter(order=self.order).update(picked_quantity=0)
+        self.assertEqual(self.complete(partial=True).status_code, 400)
+        SalesOrderItem.objects.filter(pk=self.line_a.pk).update(picked_quantity=1)
+        other = SalesOrder.objects.create(order_no='ORD-2', customer='고객', bundle_parent=self.order)
+        self.assertEqual(self.complete(partial=True).status_code, 400)
+        other.delete()
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.complete(partial=True).status_code, 200)
+
+
+class OverduePurchaseOrderTests(BaseCase):
+    def test_today_lists_overdue_and_command_alerts(self):
+        today = timezone.localdate()
+        late = PurchaseOrder.objects.create(po_number='PO-LATE', expected_date=today - timedelta(days=3), status='입고중')
+        PurchaseOrder.objects.create(po_number='PO-OK', expected_date=today)
+        PurchaseOrder.objects.create(po_number='PO-DONE', expected_date=today - timedelta(days=9), status='입고완료')
+        self.client.force_authenticate(self.admin)
+        overdue = self.client.get('/api/inventory/today/').data['overdue_purchase_orders']
+        self.assertEqual((overdue['count'], overdue['items'][0]['po_number'], overdue['items'][0]['days']), (1, 'PO-LATE', 3))
+
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        with patch('inventory.management.commands.notify_overdue.send_webhook_alert') as send:
+            call_command('notify_overdue', stdout=out)
+        self.assertIn('PO-LATE', send.call_args[0][0])
+        self.assertIn('3일 지남', out.getvalue())
+        late.delete()
+        with patch('inventory.management.commands.notify_overdue.send_webhook_alert') as send:
+            call_command('notify_overdue', stdout=StringIO())
+        send.assert_not_called()

@@ -12,11 +12,11 @@
         </select>
       </div>
       <div class="modal-footer">
-        <button ref="okRef" type="submit" :class="[d.danger ? 'btn btn-danger' : 'btn btn-primary', d.large ? 'work-btn! w-60' : 'btn-lg']"
+        <button ref="okRef" type="submit" :class="okClass"
           :disabled="(d.kind === 'prompt' && !value?.trim()) || (d.kind === 'select' && value === null)">
           {{ d.okText || '확인' }}
         </button>
-        <button v-if="d.kind !== 'alert'" ref="cancelRef" type="button" :class="['btn', d.large ? 'work-btn! w-60' : 'btn-lg']" @click="cancel">
+        <button v-if="d.kind !== 'alert'" ref="cancelRef" type="button" :class="d.large ? 'work-btn w-72' : 'btn btn-lg'" @click="cancel">
           {{ d.cancelText || '취소' }}
         </button>
       </div>
@@ -35,6 +35,10 @@ const inputRef = ref(null)
 const okRef = ref(null)
 const cancelRef = ref(null)
 
+// 현장 화면용(large)은 장갑을 껴도 누르기 쉬운 큰 버튼을 씁니다.
+const okClass = computed(() => d.value.large
+  ? ['work-btn w-72', d.value.danger ? 'work-btn-danger' : 'work-btn-primary']
+  : ['btn btn-lg', d.value.danger ? 'btn-danger' : 'btn-primary'])
 const defaultTitle = computed(() => ({ alert: '알림', confirm: '확인', prompt: '입력', select: '선택' }[d.value?.kind]))
 
 const ok = () => {

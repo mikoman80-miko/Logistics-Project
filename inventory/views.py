@@ -1,6 +1,7 @@
 import csv
 import logging
 import math
+from collections import Counter
 import re
 from datetime import datetime, time, timedelta
 from time import sleep
@@ -30,7 +31,7 @@ from rest_framework.views import APIView
 from . import carrier
 from .carrier import CarrierError
 from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
-from .serializers import user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
+from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,31 @@ def cancel_carrier(record, pickup):
     except CarrierError as exc:
         return f'택배사 취소 실패: {exc}'
     return None
+
+
+def split_backorder(order, user):
+    """부분 출고 준비: 스캔하지 못한 수량을 새 주문으로 옮기고, 원래 주문은 스캔한 수량만 남깁니다. (새 주문, 오류 문구)"""
+    if order.bundle_parent_id or order.bundle_members.exists():
+        return None, '묶음배송 주문은 부분 출고할 수 없습니다. 묶음을 해제한 뒤 진행하세요.'
+    lines = list(order.items.select_for_update())
+    if not any(line.picked_quantity > 0 for line in lines):
+        return None, '스캔한 품목이 없습니다. 하나 이상 스캔한 뒤 부분 출고하세요.'
+    short = [line for line in lines if line.picked_quantity < line.quantity]
+    if not short:
+        return None, None  # 모두 스캔했으면 보통 출고와 같습니다.
+
+    backorder = SalesOrder.objects.create(
+        order_no=next_document_number(SalesOrder, 'order_no', 'ORD'), customer=order.customer, split_from=order, created_by=user,
+        note=f'{order.order_no}의 남은 수량' + (f' / {order.note}' if order.note else ''),
+        **{key: getattr(order, key) for key in SHIPPING_FIELDS})
+    SalesOrderItem.objects.bulk_create([SalesOrderItem(order=backorder, item_id=line.item_id, quantity=line.quantity - line.picked_quantity) for line in short])
+    for line in short:
+        if line.picked_quantity == 0:
+            line.delete()
+        else:
+            line.quantity = line.picked_quantity
+            line.save(update_fields=['quantity'])
+    return backorder, None
 
 
 def bundle_shipped(master):
@@ -374,6 +400,74 @@ class ItemViewSet(viewsets.ModelViewSet):
         Item.objects.bulk_update(items, ['abc_grade'])
 
         return Response({'message': 'ABC 재고 분석 및 등급 갱신이 완료되었습니다.'}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'])
+    def audit_scan(self, request):
+        """스캔 재고 조사: 한 보관 위치에서 스캔한 바코드를 전산과 대조합니다. apply가 참이면 결과를 반영합니다.
+        수량 상품은 스캔한 개수로 수량을 맞추고, 시리얼 상품은 찾지 못한 기기를 분실 처리합니다(mark_missing)."""
+        location = WarehouseLocation.objects.filter(pk=to_int(request.data.get('location'))).first()
+        if not location:
+            return error_response('조사할 보관 위치를 고르세요.')
+        codes = [clean_code(code) for code in (request.data.get('codes') or []) if clean_code(code)]
+        if not isinstance(request.data.get('codes'), list) or len(codes) > 5000:
+            return error_response('스캔한 바코드 목록이 올바르지 않습니다. (한 번에 5,000개까지)')
+        apply, mark_missing = request.data.get('apply') is True, request.data.get('mark_missing') is True
+
+        items_by_sku = {item.sku: item for item in Item.objects.filter(is_active=True, sku__in=set(codes))}
+        serials_by_no = {s.serial_number: s for s in ItemSerial.objects.select_related('item').filter(serial_number__in=set(codes))}
+        counted, seen_serials, unknown, warnings = Counter(), {}, [], []
+        for code in codes:
+            if code in serials_by_no:
+                serial = serials_by_no[code]
+                if code in seen_serials:
+                    continue  # 같은 기기를 두 번 스캔해도 한 번만 셉니다.
+                seen_serials[code] = serial
+                counted[serial.item_id] += 1
+            elif code in items_by_sku:
+                item = items_by_sku[code]
+                if item.serial_tracked:
+                    warnings.append(f'[{code}] 시리얼 관리 상품은 상품코드가 아니라 기기의 시리얼을 스캔하세요.')
+                else:
+                    counted[item.id] += 1
+            else:
+                unknown.append(code)
+
+        item_ids = set(Item.objects.filter(is_active=True, location=location).values_list('id', flat=True)) | set(counted)
+        rows = []
+        for item in Item.objects.select_for_update().filter(pk__in=item_ids).select_related('location').order_by('sku'):
+            row = {'item': item.id, 'sku': item.sku, 'name': item.name, 'serial_tracked': item.serial_tracked,
+                   'system': item.quantity, 'counted': counted[item.id], 'other_location': item.location_id != location.id,
+                   'location_name': item.location.full_code if item.location else '', 'missing': [], 'unexpected': []}
+            if item.serial_tracked:
+                in_stock = list(item.serials.filter(status=IN_STOCK).order_by('serial_number'))
+                scanned = {no for no, s in seen_serials.items() if s.item_id == item.id}
+                row['missing'] = [s.serial_number for s in in_stock if s.serial_number not in scanned]
+                row['unexpected'] = [f'{no} ({s.status})' for no, s in seen_serials.items() if s.item_id == item.id and s.status != IN_STOCK]
+                row['system'] = len(in_stock)  # 시리얼 상품은 재고보유 시리얼 수와 비교합니다.
+            rows.append(row)
+
+        applied = []
+        if apply:
+            note = f'스캔 재고 조사 ({location.full_code})'
+            for row in rows:
+                if row['other_location']:
+                    continue  # 다른 위치 상품은 그 위치를 조사할 때 맞춥니다.
+                item = Item.objects.select_for_update().get(pk=row['item'])
+                if not item.serial_tracked and row['counted'] != item.quantity:
+                    diff = row['counted'] - item.quantity
+                    item.quantity = row['counted']
+                    item.save(update_fields=['quantity'])
+                    InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user)
+                    if diff < 0:
+                        alert_if_low_stock(item)
+                    applied.append(f'[{item.sku}] 수량 {diff:+d}')
+                elif item.serial_tracked and mark_missing:
+                    for serial in ItemSerial.objects.select_for_update().filter(item=item, serial_number__in=row['missing'], status=IN_STOCK):
+                        error = change_serial_status(serial, '분실', None, f'{note}: 분실 {serial.serial_number}', request.user)
+                        if error:
+                            return error_response(error)
+                        applied.append(f'[{serial.serial_number}] 분실 처리')
+        return Response({'location': location.full_code, 'rows': rows, 'unknown': unknown, 'warnings': warnings, 'applied': applied})
 
     @action(detail=True, methods=['post'])
     def transfer_location(self, request, pk=None):
@@ -1016,9 +1110,15 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def complete(self, request, pk=None):
         # 주문 하나를 한 번에 출고합니다. 하나라도 부족하면 전체를 처리하지 않습니다.
+        # partial이면 스캔한 만큼만 출고하고, 남은 수량은 같은 배송지의 새 주문으로 등록합니다.
         order = SalesOrder.objects.select_for_update().get(pk=self.get_object().pk)
         if order.status != '출고대기':
             return error_response(f'{order.status} 상태의 주문은 출고할 수 없습니다.')
+        backorder = None
+        if request.data.get('partial') is True:
+            backorder, error = split_backorder(order, request.user)
+            if error:
+                return error_response(error)
 
         lines = list(order.items.prefetch_related('picked_serials__serial'))
         items = {i.id: i for i in Item.objects.select_for_update().filter(id__in=[line.item_id for line in lines]).order_by('id')}
@@ -1044,6 +1144,9 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
 
         # 재고는 이미 차감되었으므로, 집하 요청이 실패해도 출고는 유지하고 관리자가 [배송 조회]로 다시 보냅니다.
         message = f'출고 완료 (총 {len(lines)}종 재고 차감)'
+        if backorder:
+            request_carrier(backorder, carrier.create_shipment)
+            message = f'부분 출고 완료. 남은 수량은 주문 {backorder.order_no}로 등록했습니다.'
         master = order.bundle_parent or order
         if carrier.enabled() and master.waybill_no:
             if bundle_shipped(master):
@@ -1057,14 +1160,14 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         return Response({'message': message, 'status': order.status, 'waybill_no': order.waybill_no})
 
 class ReturnOrderViewSet(viewsets.ModelViewSet):
-    queryset = ReturnOrder.objects.select_related('serial__item').prefetch_related('carrier_events').order_by('-created_at', '-id')
+    queryset = ReturnOrder.objects.select_related('serial', 'item', 'sales_order').prefetch_related('carrier_events').order_by('-created_at', '-id')
     serializer_class = ReturnOrderSerializer
     permission_classes = [IsAdminRole]
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
         return filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
-                                ['return_no', 'customer', 'contact_name', 'waybill_no', 'serial__serial_number', 'serial__item__name'])
+                                ['return_no', 'customer', 'contact_name', 'waybill_no', 'serial__serial_number', 'item__sku', 'item__name'])
 
     def perform_create(self, serializer):
         return_order = serializer.save(created_by=self.request.user)
@@ -1117,15 +1220,19 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         quality = request.data.get('quality') or None
         detail = clean_code(request.data.get('detail'))
+        label = clean_code(request.data.get('label'))[:50]
+
+        return_order = ReturnOrder.objects.select_for_update().get(pk=self.get_object().pk)
+        if return_order.status != '회수대기':
+            return error_response(f'{return_order.status} 상태의 반품은 처리할 수 없습니다.')
+        if not return_order.serial_id:
+            return self._complete_quantity(request, return_order, request.data.get('result'), label, detail)
 
         if new_status not in (IN_STOCK, 'AS진행중', '불량폐기'):
             return error_response('올바르지 않은 회수 처리 상태입니다.')
         if quality and quality not in SERIAL_QUALITIES:
             return error_response('올바르지 않은 품질 등급입니다.')
 
-        return_order = ReturnOrder.objects.select_for_update().get(pk=self.get_object().pk)
-        if return_order.status != '회수대기':
-            return error_response(f'{return_order.status} 상태의 반품은 처리할 수 없습니다.')
         serial = ItemSerial.objects.select_for_update().get(pk=return_order.serial_id)
         if serial.status != '출고완료':
             return error_response(f'출고완료 상태의 시리얼만 회수할 수 있습니다. (현재: {serial.status})')
@@ -1135,10 +1242,25 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
         if error:
             return error_response(error)
 
-        return_order.status = '회수완료'
+        return_order.status, return_order.result = '회수완료', label
         return_order.completed_at = timezone.now()
-        return_order.save(update_fields=['status', 'completed_at'])
+        return_order.save(update_fields=['status', 'result', 'completed_at'])
         return Response({'message': f'S/N [{serial.serial_number}] 회수 처리 완료', 'status': serial.status})
+
+    def _complete_quantity(self, request, return_order, result, label, detail):
+        # 시리얼 없는 상품: 재고로 되돌리거나(restock) 폐기(dispose)합니다.
+        if result not in ('restock', 'dispose'):
+            return error_response('회수 결과를 고르세요. (재고로 되돌림 또는 폐기)')
+        item = Item.objects.select_for_update().get(pk=return_order.item_id)
+        description = f'반품 {return_order.return_no} 회수 {return_order.quantity}개' + (f' ({detail})' if detail else '')
+        if result == 'restock':
+            item.quantity += return_order.quantity
+            item.save(update_fields=['quantity'])
+            InventoryLog.objects.create(item=item, action='IN', quantity_changed=return_order.quantity, description=description[:200], user=request.user)
+        return_order.status, return_order.result = '회수완료', label or ('재고로 되돌림' if result == 'restock' else '폐기')
+        return_order.completed_at = timezone.now()
+        return_order.save(update_fields=['status', 'result', 'completed_at'])
+        return Response({'message': f'[{item.name}] {return_order.quantity}개 회수 처리 완료 ({return_order.result})', 'status': return_order.status})
 
 
 class LogPagination(PageNumberPagination):
@@ -1292,6 +1414,16 @@ class WarehouseLocationViewSet(viewsets.ModelViewSet):
 STALLED_HOURS = 24  # 출고 후 이 시간이 지나도 배송완료가 아니면 확인이 필요합니다.
 
 
+def overdue_purchase_orders(limit=10):
+    """입고 예정일이 지났는데 아직 다 받지 못한 발주 (오늘 할 일, 슬랙 알림에서 함께 씀)"""
+    today = timezone.localdate()
+    pos = (PurchaseOrder.objects.filter(status__in=['발주대기', '입고중'], expected_date__lt=today)
+           .select_related('supplier').order_by('expected_date', 'id'))
+    items = [{'id': po.id, 'po_number': po.po_number, 'supplier': po.supplier.name if po.supplier else '',
+              'expected_date': po.expected_date, 'days': (today - po.expected_date).days, 'status': po.status} for po in pos[:limit]]
+    return {'count': pos.count(), 'items': items}
+
+
 def carrier_issues(limit=10):
     """택배 연동에서 사람이 확인해야 할 주문·반품: 요청 실패, 운송장 없음, 오래 멈춘 배송"""
     if not carrier.enabled():
@@ -1326,6 +1458,7 @@ class TodayAPIView(APIView):
         low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).count()
         return Response({
             'carrier_issues': carrier_issues(),
+            'overdue_purchase_orders': overdue_purchase_orders(),
             'orders': SalesOrder.objects.filter(status='출고대기').count(),
             'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),

@@ -19,6 +19,29 @@
       </button>
     </div>
 
+    <div v-if="today.overdue_purchase_orders.count > 0" class="panel">
+      <div class="panel-header">
+        <span class="panel-title text-warning">입고 예정일이 지난 발주 {{ today.overdue_purchase_orders.count }}건</span>
+        <span class="text-muted">거래처에 입고 일정을 확인하세요</span>
+      </div>
+      <div class="panel-body-flush">
+        <table class="data-table">
+          <thead>
+            <tr><th width="180">발주번호</th><th>거래처</th><th width="130">입고 예정일</th><th width="110">지연</th><th width="100">상태</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="po in today.overdue_purchase_orders.items" :key="po.id" class="is-clickable" @click="router.push({ path: '/purchase-order', query: { q: po.po_number } })">
+              <td class="text-center font-bold text-primary">{{ po.po_number }}</td>
+              <td class="truncate">{{ po.supplier || '미지정' }}</td>
+              <td class="text-center">{{ po.expected_date }}</td>
+              <td class="text-center font-bold text-warning">{{ po.days }}일 지남</td>
+              <td class="text-center">{{ po.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div v-if="today.carrier_issues.count > 0" class="panel">
       <div class="panel-header">
         <span class="panel-title text-danger">택배 확인 필요 {{ today.carrier_issues.count }}건</span>
@@ -69,7 +92,7 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
+const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
 
 const cards = [
   { title: '출고 대기', count: () => today.value.orders, hint: '스캔 후 출고할 주문', path: '/orders', color: 'text-primary' },

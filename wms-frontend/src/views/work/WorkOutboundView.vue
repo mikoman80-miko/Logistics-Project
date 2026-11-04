@@ -30,6 +30,7 @@
           <div class="text-4xl font-bold text-center">{{ prompt }}</div>
           <ScanBox :paused="!!qtyLine" @scan="onScan" />
           <button v-if="canEnterQuantity" class="work-btn" @click="qtyLine = current">수량 직접 입력</button>
+          <button v-if="canShipPartial" class="work-btn work-btn-warning" :disabled="isSaving" @click="shipPartial">있는 것만 출고 (부분 출고)</button>
         </template>
 
         <div v-else class="work-task justify-center items-center flex-1">
@@ -136,6 +137,27 @@ const enterQuantity = async (quantity) => {
     applyResult(res.data)
   } catch (err) {
     fail(apiErrorMessage(err, '수량 처리 중 오류가 발생했습니다.'))
+  }
+}
+
+// 재고가 모자랄 때: 스캔한 만큼 먼저 보내고 남은 수량은 새 주문으로 남깁니다. (묶음배송은 불가)
+const canShipPartial = computed(() => order.value && !order.value.bundle_orders.length && order.value.items.some(line => line.picked_quantity > 0))
+
+const shipPartial = async () => {
+  const remain = order.value.items.filter(line => !isDone(line)).map(line => `${line.item_name} ${line.quantity - line.picked_quantity}개`)
+  if (!(await dialog.confirm(`스캔한 것만 지금 출고합니다.
+남는 수량: ${remain.join(', ')}
+남은 수량은 새 주문으로 등록됩니다.`,
+    { title: '부분 출고', okText: '부분 출고', cancelText: '취소', large: true, focusCancel: true }))) return
+  isSaving.value = true
+  try {
+    const res = await axios.post(`/api/inventory/orders/${order.value.id}/complete/`, { partial: true })
+    ok(res.data.message)
+    await leave()
+  } catch (err) {
+    fail(apiErrorMessage(err, '부분 출고 중 오류가 발생했습니다. 재고는 차감되지 않았습니다.'))
+  } finally {
+    isSaving.value = false
   }
 }
 

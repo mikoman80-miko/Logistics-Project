@@ -243,11 +243,16 @@ const cancelPO = async () => {
 watch(statusFilter, fetchPOs)
 
 // 오늘 할 일의 재고 부족 카드에서 /purchase-order?suggest=1 로 들어오면 발주 제안을 엽니다.
-onActivated(() => {
-  if (route.query.suggest) {
-    suggestOpen.value = true
-    router.replace({ query: {} })
+// 다른 화면에서 /purchase-order?q=발주번호 로 들어오면 그 발주서를 찾아 엽니다.
+onActivated(async () => {
+  const { suggest, q } = route.query
+  if (suggest || q) router.replace({ query: {} })
+  if (suggest) suggestOpen.value = true
+  if (q) {
+    filter.value = { q, start_date: '', end_date: '' }
+    statusFilter.value = ''
   }
-  fetchPOs()
+  await fetchPOs()
+  if (q && poList.value.length === 1) selected.value = poList.value[0]
 })
 </script>

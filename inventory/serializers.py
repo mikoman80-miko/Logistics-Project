@@ -175,11 +175,12 @@ class SalesOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
     items = SalesOrderItemSerializer(many=True)
     carrier_events = serializers.SerializerMethodField()
     bundle_orders = serializers.SerializerMethodField()
+    split_from_no = serializers.CharField(source='split_from.order_no', read_only=True, default='')
 
     class Meta:
         model = SalesOrder
         fields = '__all__'
-        read_only_fields = ['order_no', 'status', 'created_by', 'created_at', 'completed_at', 'bundle_parent', *CARRIER_FIELDS]
+        read_only_fields = ['order_no', 'status', 'created_by', 'created_at', 'completed_at', 'bundle_parent', 'split_from', *CARRIER_FIELDS]
 
     def get_carrier_events(self, obj):
         # 묶인 주문은 대표 주문의 배송 이력을 보여줍니다.
@@ -205,17 +206,44 @@ class SalesOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
         return order
 
 class ReturnOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
-    serial_number = serializers.CharField(source='serial.serial_number', read_only=True)
-    item_sku = serializers.CharField(source='serial.item.sku', read_only=True)
-    item_name = serializers.CharField(source='serial.item.name', read_only=True)
+    serial_number = serializers.CharField(source='serial.serial_number', read_only=True, default='')
+    item = serializers.PrimaryKeyRelatedField(queryset=Item.objects.filter(is_active=True), required=False)
+    item_sku = serializers.CharField(source='item.sku', read_only=True)
+    item_name = serializers.CharField(source='item.name', read_only=True)
+    serial_tracked = serializers.BooleanField(source='item.serial_tracked', read_only=True)
+    order_no = serializers.CharField(source='sales_order.order_no', read_only=True, default='')
+    quantity = serializers.IntegerField(min_value=1, required=False)
 
     class Meta:
         model = ReturnOrder
         fields = '__all__'
-        read_only_fields = ['return_no', 'status', 'created_by', 'created_at', 'completed_at', *CARRIER_FIELDS]
+        read_only_fields = ['return_no', 'status', 'result', 'created_by', 'created_at', 'completed_at', *CARRIER_FIELDS]
 
     def validate(self, attrs):
-        return validate_shipping(attrs, required=False)
+        attrs = validate_shipping(attrs, required=False)
+        if self.instance:
+            return attrs
+        serial, item, order = attrs.get('serial'), attrs.get('item'), attrs.get('sales_order')
+        if serial:
+            # 시리얼 반품: 상품과 수량은 시리얼에서 정합니다.
+            attrs.update(item=serial.item, quantity=1)
+            return attrs
+        if not item:
+            raise serializers.ValidationError({'item': '반품할 시리얼 또는 상품을 선택해주세요.'})
+        if item.serial_tracked:
+            raise serializers.ValidationError({'item': '시리얼 관리 상품은 시리얼을 골라 반품 등록해주세요.'})
+        quantity = attrs.setdefault('quantity', 1)
+        if order:
+            # 원래 주문을 고르면 그 주문에서 나간 수량까지만 반품할 수 있습니다.
+            if order.status != '출고완료':
+                raise serializers.ValidationError({'sales_order': '출고완료된 주문만 고를 수 있습니다.'})
+            line = order.items.filter(item=item).first()
+            if not line:
+                raise serializers.ValidationError({'sales_order': f'이 주문에는 [{item.sku}] 상품이 없습니다.'})
+            returned = sum(order.returns.filter(item=item).exclude(status='취소됨').values_list('quantity', flat=True))
+            if quantity > line.quantity - returned:
+                raise serializers.ValidationError({'quantity': f'이 주문에서 더 반품할 수 있는 수량은 {line.quantity - returned}개입니다.'})
+        return attrs
 
     def validate_serial(self, serial):
         if serial.status != '출고완료':
@@ -225,14 +253,16 @@ class ReturnOrderSerializer(CarrierInfoMixin, serializers.ModelSerializer):
         return serial
 
     def create(self, validated_data):
-        # 회수지를 비워 두면 그 기기를 출고한 주문의 배송지에서 회수합니다.
-        if not validated_data.get('address'):
+        # 회수지를 비워 두면 원래 출고한 주문의 배송지에서 회수합니다. (시리얼은 그 기기를 출고한 주문)
+        if validated_data.get('serial') and not validated_data.get('sales_order'):
             pick = (SalesOrderSerial.objects.filter(serial=validated_data['serial'], line__order__status='출고완료')
                     .select_related('line__order').order_by('-line__order__completed_at').first())
             if pick:
-                order = pick.line.order
-                for key in ('contact_name', 'contact_phone', 'zipcode', 'address', 'address_detail'):
-                    validated_data[key] = validated_data.get(key) or getattr(order, key)
+                validated_data['sales_order'] = pick.line.order
+        order = validated_data.get('sales_order')
+        if order and not validated_data.get('address'):
+            for key in ('contact_name', 'contact_phone', 'zipcode', 'address', 'address_detail'):
+                validated_data[key] = validated_data.get(key) or getattr(order, key)
         return ReturnOrder.objects.create(return_no=next_document_number(ReturnOrder, 'return_no', 'RTN'), **validated_data)
 
 class ItemSerialSerializer(serializers.ModelSerializer):

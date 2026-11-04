@@ -116,6 +116,7 @@
               <span class="font-normal">· 대표 {{ selected.bundle_orders[0] }}</span></span>
             <button v-if="selected.status === '출고대기'" class="btn btn-sm" :disabled="isSaving" @click="unbundle">묶음 해제</button>
           </div>
+          <div v-if="selected.split_from_no" class="alert alert-info">부분 출고 후 남은 수량으로 만든 주문입니다. (원래 주문 {{ selected.split_from_no }})</div>
           <div v-if="selected.note" class="alert alert-info">비고: {{ selected.note }}</div>
           <table class="data-table">
             <thead>

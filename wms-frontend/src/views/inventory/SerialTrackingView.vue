@@ -29,6 +29,7 @@
                 <option value="출고완료">출고완료</option>
                 <option value="AS진행중">AS진행중</option>
                 <option value="불량폐기">불량폐기</option>
+                <option value="분실">분실</option>
               </select>
             </td>
             <th>품질 등급</th>
@@ -225,12 +226,12 @@ const applyBatchUpdate = async () => {
 }
 
 const rowClass = (serial) => {
-  if (serial.status === '불량폐기') return 'row-muted'
+  if (serial.status === '불량폐기' || serial.status === '분실') return 'row-muted'
   if (serial.status === 'AS진행중') return 'row-warning'
   return ''
 }
 const statusColor = (status) => {
-  const colors = { '재고보유': 'text-success', '출고완료': 'text-primary', 'AS진행중': 'text-warning', '불량폐기': 'text-danger' }
+  const colors = { '재고보유': 'text-success', '출고완료': 'text-primary', 'AS진행중': 'text-warning', '불량폐기': 'text-danger', '분실': 'text-danger' }
   return colors[status] || ''
 }
 const qualityColor = (quality) => {
