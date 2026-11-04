@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ItemViewSet, 
     WorkerReportAPIView,
+    DailyCloseAPIView,
     InventoryLogViewSet, 
     ItemSerialViewSet, 
     WarehouseLocationViewSet, 
@@ -35,4 +36,5 @@ urlpatterns = [
     path('dashboard/', DashboardAPIView.as_view(), name='dashboard-stats'),
     path('today/', TodayAPIView.as_view(), name='today-summary'),
     path('reports/workers/', WorkerReportAPIView.as_view(), name='worker-report'),
+    path('reports/daily/', DailyCloseAPIView.as_view(), name='daily-close'),
 ]

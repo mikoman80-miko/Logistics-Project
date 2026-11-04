@@ -276,3 +276,16 @@ class WorkerBadge(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='badge')
     code = models.CharField(max_length=32, unique=True)
     created_at = models.DateTimeField(auto_now=True)
+
+
+
+class DailyClose(models.Model):
+    # 일일 마감: 그날의 입고·출고·반품과 남은 일을 마감 시점 그대로 저장합니다. 다시 마감하면 새로 계산해 덮어씁니다.
+    date = models.DateField(unique=True)
+    summary = models.JSONField()
+    note = models.CharField(max_length=200, blank=True, default='')
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    closed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date']

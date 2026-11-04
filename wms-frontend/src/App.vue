@@ -114,6 +114,7 @@ const menuGroups = [
     { title: '시리얼 조회', path: '/serials' },
   ] },
   { title: '보고서', menus: [
+    { title: '일일 마감', path: '/daily-close' },
     { title: '입출고 장부', path: '/ledger' },
     { title: '입출고 통계', path: '/dashboard' },
     { title: '작업자 실적', path: '/workers' },

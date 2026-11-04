@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import InventoryLog, Item, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import DailyClose, InventoryLog, Item, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -1298,3 +1298,46 @@ class WorkerReportTests(BaseCase):
         self.assertEqual(self.client.get(self.URL, {'start_date': '2026-02-01', 'end_date': '2026-01-01'}).status_code, 400)
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+
+class DailyCloseTests(WorkerReportTests):
+    DAILY = '/api/inventory/reports/daily/'
+
+    # 부모 클래스의 실적 테스트를 다시 돌리지 않도록 비웁니다.
+    test_counts_documents_per_worker = test_serial_return_without_restock_is_recorded = None
+    test_move_counts_moved_quantity = test_period_and_permission = None
+
+    def test_summary_counts_today(self):
+        self.ship(2)
+        self.client.post(ORDERS, {'customer': '대기고객', 'items': [{'item': self.item.id, 'quantity': 1}]}, format='json')
+        data = self.client.get(self.DAILY).data
+        self.assertIsNone(data['closed'])
+        summary = data['summary']
+        self.assertEqual((summary['outbound']['documents'], summary['outbound']['quantity']), (1, 2))
+        self.assertEqual((summary['received']['orders'], summary['backlog']['orders'], summary['backlog']['orders_carried']), (2, 1, 0))
+        self.assertEqual(summary['workers'][0]['username'], 'worker')
+        self.assertEqual(summary['backlog']['low_stock']['count'], 2)  # 상품A 3개, 상품B 1개 (안전재고 5)
+
+    @patch('inventory.views.send_webhook_alert')
+    def test_close_saves_snapshot_and_reclose_overwrites(self, alert):
+        self.ship(1)
+        res = self.client.post(self.DAILY, {'note': '이상 없음'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('[일일 마감]', alert.call_args_list[-1].args[0])
+        self.assertIn('출고 1건 1개', alert.call_args_list[-1].args[0])
+        # 마감 뒤 처리한 일은 저장된 마감 내용에 들어가지 않고, 다시 마감하면 반영됩니다.
+        self.ship(1)
+        data = self.client.get(self.DAILY).data
+        self.assertEqual((data['closed']['note'], data['summary']['outbound']['documents']), ('이상 없음', 1))
+        self.assertEqual(len(data['history']), 1)
+        res = self.client.post(self.DAILY, {}, format='json')
+        self.assertIn('다시 마감', res.data['message'])
+        self.assertEqual(self.client.get(self.DAILY).data['summary']['outbound']['documents'], 2)
+        self.assertEqual(DailyClose.objects.count(), 1)
+
+    def test_future_and_permission(self):
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        self.assertEqual(self.client.post(self.DAILY, {'date': tomorrow}, format='json').status_code, 400)
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(self.DAILY).status_code, 403)
+        self.assertEqual(self.client.post(self.DAILY, {}, format='json').status_code, 403)

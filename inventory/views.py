@@ -32,7 +32,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import carrier, stock
 from .carrier import CarrierError
-from .models import WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import DailyClose, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -1605,65 +1605,168 @@ class DashboardAPIView(APIView):
 REPORT_MAX_DAYS = 93
 
 
-class WorkerReportAPIView(APIView):
-    """작업자별 실적: 기간 안에 누가 어떤 작업을 얼마나 했는지 셉니다.
+WORKS = [name for name, _ in InventoryLog.WORK_CHOICES]
+
+
+def worker_stats(start, end):
+    """기간(날짜 start~end) 동안 작업자별·일자별 작업 실적.
     건수는 문서(발주·주문·반품) 수, 문서가 없는 작업(이동·조정)은 처리한 줄 수입니다."""
+    logs = (InventoryLog.objects.filter(timestamp__gte=day_start(start), timestamp__lt=day_start(end + timedelta(days=1)))
+            .exclude(work='').values('user_id', 'work', 'reference', 'quantity_changed', 'timestamp', 'description'))
+    users = {u.id: u for u in User.objects.filter(id__in={row['user_id'] for row in logs if row['user_id']})}
+    return_quantities = dict(ReturnOrder.objects.filter(return_no__in={row['reference'] for row in logs if row['work'] == '반품'})
+                             .values_list('return_no', 'quantity'))
+
+    def blank():
+        return {work: {'count': 0, 'lines': 0, 'quantity': 0} for work in WORKS}
+
+    workers, daily, refs = {}, {}, set()
+    for row in logs:
+        uid = row['user_id']
+        if uid not in workers:
+            user = users.get(uid)
+            workers[uid] = {'user_id': uid, 'username': user.username if user else '', 'name': user_display(user) if user else '(기록 없음)',
+                            'is_staff': bool(user and user.is_staff), 'works': blank(), 'lines': 0, 'first': None, 'last': None}
+        worker, work = workers[uid], row['work']
+        cell = worker['works'][work]
+        cell['lines'] += 1
+        worker['lines'] += 1
+        # 문서 번호가 있으면 문서 단위로 한 번만 셉니다.
+        key = (uid, work, row['reference'])
+        if not row['reference'] or key not in refs:
+            refs.add(key)
+            cell['count'] += 1
+            if work == '반품':
+                cell['quantity'] += return_quantities.get(row['reference'], 1)
+        if work != '반품':
+            cell['quantity'] += abs(row['quantity_changed']) or moved_quantity(row['description'])
+        stamp = timezone.localtime(row['timestamp'])
+        worker['first'] = min(worker['first'] or stamp, stamp)
+        worker['last'] = max(worker['last'] or stamp, stamp)
+        day = daily.setdefault((stamp.date(), uid), {'date': stamp.date().isoformat(), 'user_id': uid, 'name': worker['name'],
+                                                    'works': {w: 0 for w in WORKS}, 'lines': 0})
+        day['works'][work] += 1
+        day['lines'] += 1
+
+    rows = sorted(workers.values(), key=lambda w: (-w['lines'], w['name']))
+    for worker in rows:
+        worker['first'] = worker['first'] and worker['first'].isoformat()
+        worker['last'] = worker['last'] and worker['last'].isoformat()
+    return rows, sorted(daily.values(), key=lambda d: (d['date'], d['name']))
+
+
+class WorkerReportAPIView(APIView):
+    """작업자별 실적: 기간 안에 누가 어떤 작업을 얼마나 했는지 셉니다."""
     permission_classes = [IsAdminUser]
-    WORKS = [name for name, _ in InventoryLog.WORK_CHOICES]
 
     def get(self, request):
-        today = timezone.localdate()
-        end = parse_date_param(request.query_params.get('end_date')) or today
+        end = parse_date_param(request.query_params.get('end_date')) or timezone.localdate()
         start = parse_date_param(request.query_params.get('start_date')) or end - timedelta(days=6)
         if start > end:
             return error_response('시작일이 종료일보다 늦습니다.')
         if (end - start).days >= REPORT_MAX_DAYS:
             return error_response(f'기간은 최대 {REPORT_MAX_DAYS}일까지 조회할 수 있습니다.')
+        workers, daily = worker_stats(start, end)
+        return Response({'start_date': start.isoformat(), 'end_date': end.isoformat(), 'works': WORKS, 'workers': workers, 'daily': daily})
 
-        logs = (InventoryLog.objects.filter(timestamp__gte=day_start(start), timestamp__lt=day_start(end + timedelta(days=1)))
-                .exclude(work='').values('user_id', 'work', 'reference', 'quantity_changed', 'timestamp', 'description'))
-        users = {u.id: u for u in User.objects.filter(id__in={row['user_id'] for row in logs if row['user_id']})}
-        return_quantities = dict(ReturnOrder.objects.filter(return_no__in={row['reference'] for row in logs if row['work'] == '반품'})
-                                 .values_list('return_no', 'quantity'))
 
-        def blank():
-            return {work: {'count': 0, 'lines': 0, 'quantity': 0} for work in self.WORKS}
+def daily_summary(day):
+    """일일 마감 요약. 처리 실적은 그날 기록으로, 남은 일(backlog)은 계산하는 지금 기준으로 셉니다."""
+    start, end = day_start(day), day_start(day + timedelta(days=1))
+    logs = InventoryLog.objects.filter(timestamp__gte=start, timestamp__lt=end)
 
-        workers, daily, refs = {}, {}, set()
-        for row in logs:
-            uid = row['user_id']
-            if uid not in workers:
-                user = users.get(uid)
-                workers[uid] = {'user_id': uid, 'username': user.username if user else '', 'name': user_display(user) if user else '(기록 없음)',
-                                'is_staff': bool(user and user.is_staff), 'works': blank(), 'lines': 0, 'first': None, 'last': None}
-            worker, work = workers[uid], row['work']
-            cell = worker['works'][work]
-            cell['lines'] += 1
-            worker['lines'] += 1
-            # 문서 번호가 있으면 문서 단위로 한 번만 셉니다.
-            key = (uid, work, row['reference'])
-            if not row['reference'] or key not in refs:
-                refs.add(key)
-                cell['count'] += 1
-                if work == '반품':
-                    cell['quantity'] += return_quantities.get(row['reference'], 1)
-            if work != '반품':
-                cell['quantity'] += abs(row['quantity_changed']) or moved_quantity(row['description'])
-            stamp = timezone.localtime(row['timestamp'])
-            worker['first'] = min(worker['first'] or stamp, stamp)
-            worker['last'] = max(worker['last'] or stamp, stamp)
-            day = daily.setdefault((stamp.date(), uid), {'date': stamp.date().isoformat(), 'user_id': uid, 'name': worker['name'], 'works': {w: 0 for w in self.WORKS}, 'lines': 0})
-            day['works'][work] += 1
-            day['lines'] += 1
+    def work(name):
+        rows = logs.filter(work=name)
+        return {
+            'documents': rows.exclude(reference='').values('reference').distinct().count() + rows.filter(reference='').count(),
+            'lines': rows.count(),
+            'quantity': abs(rows.aggregate(total=Coalesce(Sum('quantity_changed'), 0))['total']),
+        }
 
-        rows = sorted(workers.values(), key=lambda w: (-w['lines'], w['name']))
-        for worker in rows:
-            worker['first'] = worker['first'] and worker['first'].isoformat()
-            worker['last'] = worker['last'] and worker['last'].isoformat()
+    returned = ReturnOrder.objects.filter(status='회수완료', completed_at__gte=start, completed_at__lt=end)
+    adjust = logs.filter(work='조정').aggregate(plus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__gt=0)), 0),
+                                              minus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__lt=0)), 0))
+    pending_orders = SalesOrder.objects.filter(status='출고대기')
+    low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).order_by('quantity', 'sku')
+    workers, _ = worker_stats(day, day)
+    return {
+        'inbound': work('입고'),
+        'inbound_cancel': work('입고취소'),
+        'outbound': work('출고'),
+        'returns': {
+            'documents': returned.count(),
+            'quantity': returned.aggregate(total=Coalesce(Sum('quantity'), 0))['total'],
+            'results': [{'result': row['result'] or '(기록 없음)', 'count': row['n']}
+                        for row in returned.values('result').annotate(n=Count('id')).order_by('-n')],
+        },
+        'moves': logs.filter(work='이동').count(),
+        'adjust': {'lines': logs.filter(work='조정').count(), 'plus': adjust['plus'], 'minus': abs(adjust['minus'])},
+        'received': {
+            'orders': SalesOrder.objects.filter(created_at__gte=start, created_at__lt=end).count(),
+            'returns': ReturnOrder.objects.filter(created_at__gte=start, created_at__lt=end).count(),
+            'purchase_orders': PurchaseOrder.objects.filter(order_date=day).count(),
+        },
+        'backlog': {
+            'orders': pending_orders.count(),
+            'orders_carried': pending_orders.filter(created_at__lt=start).count(),  # 그날 이전에 들어와 아직 못 나간 주문
+            'pending_orders': [{'order_no': o.order_no, 'customer': o.customer, 'created_at': timezone.localtime(o.created_at).isoformat()}
+                               for o in pending_orders.order_by('created_at')[:20]],
+            'returns': ReturnOrder.objects.filter(status='회수대기').count(),
+            'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
+            'overdue_purchase_orders': overdue_purchase_orders()['count'],
+            'carrier_issues': carrier_issues(limit=20),
+            'low_stock': {'count': low_stock.count(),
+                          'items': [{'sku': i.sku, 'name': i.name, 'quantity': i.quantity, 'safety_stock': i.safety_stock} for i in low_stock[:20]]},
+        },
+        'workers': [{'name': w['name'], 'username': w['username'], 'lines': w['lines'],
+                     'works': {k: v['count'] for k, v in w['works'].items() if v['count']}} for w in workers],
+        'calculated_at': timezone.localtime().isoformat(),
+    }
+
+
+def close_message(day, summary, user, note):
+    s, b = summary, summary['backlog']
+    lines = [
+        f'[일일 마감] {day.isoformat()} ({user_display(user)})',
+        f"입고 {s['inbound']['documents']}건 {s['inbound']['quantity']}개 · 출고 {s['outbound']['documents']}건 {s['outbound']['quantity']}개 · 반품 회수 {s['returns']['documents']}건",
+        f"남은 일: 출고대기 {b['orders']}건(이월 {b['orders_carried']}) · 회수대기 {b['returns']}건 · 입고 지연 {b['overdue_purchase_orders']}건"
+        f" · 택배 확인 {b['carrier_issues']['count']}건 · 재고 부족 {b['low_stock']['count']}종",
+    ]
+    if note:
+        lines.append(f'메모: {note}')
+    return '\n'.join(lines)
+
+
+def close_payload(record):
+    return {'date': record.date.isoformat(), 'note': record.note, 'closed_by': user_display(record.closed_by) if record.closed_by else '',
+            'closed_at': timezone.localtime(record.closed_at).isoformat()}
+
+
+class DailyCloseAPIView(APIView):
+    """GET ?date=: 그날 요약 (마감했으면 마감 때 저장한 내용) / POST {date, note}: 마감 (다시 마감하면 새로 계산해 덮어씀)"""
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        day = parse_date_param(request.query_params.get('date')) or timezone.localdate()
+        record = DailyClose.objects.filter(date=day).select_related('closed_by').first()
+        history = [{**close_payload(r), 'outbound': r.summary['outbound']['documents'], 'backlog_orders': r.summary['backlog']['orders']}
+                   for r in DailyClose.objects.select_related('closed_by')[:14]]
         return Response({
-            'start_date': start.isoformat(), 'end_date': end.isoformat(), 'works': self.WORKS, 'workers': rows,
-            'daily': sorted(daily.values(), key=lambda d: (d['date'], d['name'])),
+            'date': day.isoformat(), 'today': timezone.localdate().isoformat(),
+            'closed': close_payload(record) if record else None,
+            'summary': record.summary if record else daily_summary(day),
+            'history': history,
         })
+
+    def post(self, request):
+        day = parse_date_param(request.data.get('date')) or timezone.localdate()
+        if day > timezone.localdate():
+            return error_response('앞으로 올 날짜는 마감할 수 없습니다.')
+        note = clean_code(request.data.get('note'))[:200]
+        summary = daily_summary(day)
+        record, created = DailyClose.objects.update_or_create(date=day, defaults={'summary': summary, 'note': note, 'closed_by': request.user})
+        send_webhook_alert(close_message(day, summary, request.user, note))
+        return Response({'message': f"{day.isoformat()} {'마감' if created else '다시 마감'} 완료", 'closed': close_payload(record), 'summary': summary})
 
 
 MOVED_PATTERN = re.compile(r'\] (\d+)개')
