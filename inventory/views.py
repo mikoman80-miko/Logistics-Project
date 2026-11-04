@@ -243,8 +243,15 @@ def clean_code(value):
 
 
 def alert_if_low_stock(item):
-    if item.quantity <= item.safety_stock:
-        send_webhook_alert(f"재고 부족 경고! {item.name}의 현재 재고가 {item.quantity}개로 안전 재고({item.safety_stock}개) 이하입니다. 긴급 발주가 필요합니다.")
+    """안전 재고 이하로 처음 내려갈 때 한 번만 알립니다. 다시 안전 재고 위로 채워지면(Item.save) 다음에 또 알립니다."""
+    if item.quantity > item.safety_stock or item.low_stock_alerted:
+        return
+    incoming = (PurchaseOrderItem.objects.filter(item=item, po__status__in=['발주대기', '입고중'])
+                .aggregate(n=Coalesce(Sum(F('order_quantity') - F('received_quantity')), 0))['n'])
+    plan = f'입고 예정 {incoming}개' if incoming > 0 else '진행 중인 발주 없음 → 발주 관리의 [발주 제안]에서 발주하세요'
+    send_webhook_alert(f"[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}")
+    Item.objects.filter(pk=item.pk).update(low_stock_alerted=True)
+    item.low_stock_alerted = True
 
 
 def change_serial_status(serial, new_status, quality=None, description='', user=None, work='조정', reference=''):

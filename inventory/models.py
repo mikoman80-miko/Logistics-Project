@@ -54,6 +54,7 @@ class Item(models.Model):
     # 위치 보충: 기본 위치(꺼내는 자리)의 재고가 최소 이하로 내려가면 다른 위치에서 최대까지 채우라고 안내합니다. 0이면 쓰지 않습니다.
     pick_min = models.PositiveIntegerField(default=0)
     pick_max = models.PositiveIntegerField(default=0)
+    low_stock_alerted = models.BooleanField(default=False)  # 재고 부족 알림을 보냈는지. 안전 재고 위로 올라오면 다시 꺼집니다.
     abc_grade = models.CharField(max_length=10, blank=True, null=True) # A, B, C 등급 (장기 체화 분석용)
     is_active = models.BooleanField(default=True) # 삭제해도 이력을 남기기 위해 사용 중지로 처리
     
@@ -66,6 +67,14 @@ class Item(models.Model):
 
     def __str__(self):
         return f"[{self.sku}] {self.name}"
+
+    def save(self, *args, **kwargs):
+        if self.low_stock_alerted and self.quantity > self.safety_stock:
+            self.low_stock_alerted = False
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = {*kwargs['update_fields'], 'low_stock_alerted'}
+        super().save(*args, **kwargs)
+
 
 class ItemStock(models.Model):
     """위치별 재고. 상품의 총재고(Item.quantity)에서 위치별 합을 뺀 나머지는 '위치 미지정' 재고입니다."""

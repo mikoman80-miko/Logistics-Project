@@ -104,7 +104,7 @@ class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = '__all__'
-        read_only_fields = ['is_active']
+        read_only_fields = ['is_active', 'low_stock_alerted']
 
     def get_stocks(self, obj):
         return stock_rows(obj)

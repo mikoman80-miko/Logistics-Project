@@ -1514,3 +1514,28 @@ class MasterChangeTests(BaseCase):
 def user_display_name(user):
     from .serializers import user_display
     return user_display(user)
+
+
+class LowStockAlertTests(BaseCase):
+    def adjust(self, change):
+        self.client.force_authenticate(self.admin)
+        return self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': change}, format='json')
+
+    @patch('inventory.views.send_webhook_alert')
+    def test_alerts_once_until_restocked(self, alert):
+        Item.objects.filter(pk=self.item.pk).update(quantity=10)
+        ItemStock.objects.create(item=self.item, location=WarehouseLocation.objects.create(zone='A', rack='R1', tier=1), quantity=10)
+        self.adjust(-6)  # 10 → 4 (안전 재고 5 이하)
+        self.adjust(-1)  # 3: 이미 알렸으므로 다시 보내지 않음
+        low = [c.args[0] for c in alert.call_args_list if c.args[0].startswith('[재고 부족]')]
+        self.assertEqual(len(low), 1)
+        self.assertIn('재고 4개 ≤ 안전 재고 5개 · 진행 중인 발주 없음', low[0])
+        self.adjust(5)   # 8: 안전 재고 위로 → 표시 해제
+        self.item.refresh_from_db()
+        self.assertFalse(self.item.low_stock_alerted)
+        po = PurchaseOrder.objects.create(po_number='PO-X', status='발주대기')
+        PurchaseOrderItem.objects.create(po=po, item=self.item, order_quantity=20)
+        self.adjust(-4)  # 4: 다시 알림, 입고 예정 수량 포함
+        low = [c.args[0] for c in alert.call_args_list if c.args[0].startswith('[재고 부족]')]
+        self.assertEqual(len(low), 2)
+        self.assertIn('입고 예정 20개', low[1])
