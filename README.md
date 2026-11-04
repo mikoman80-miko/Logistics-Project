@@ -119,7 +119,7 @@ myenv\Scripts\python restore_check.py    # 복원 리허설: 가장 최근 백�
 
 1. `npm run stop`으로 서버를 멈춥니다.
 2. `myenv\Scripts\python backup_db.py`로 지금 상태도 백업해 둡니다.
-3. 복원합니다: `& "C:\Program Files\MariaDB 13.0in\mariadb.exe" -u wms_app -p wms_db -e "source db_backups/백업파일.sql"`
+3. 복원합니다: `& "C:\Program Files\MariaDB 13.0\bin\mariadb.exe" -u wms_app -p wms_db -e "source db_backups/백업파일.sql"`
 4. `myenv\Scripts\python manage.py migrate`로 구조를 지금 코드에 맞춥니다.
 5. `npm run start`로 다시 실행합니다.
 
