@@ -38,6 +38,8 @@ class AuthTests(BaseCase):
         self.assertEqual(res.data['role'], '관리자')
         res = self.client.post('/api/token/', {'username': 'worker', 'password': 'pw-strong-2'})
         self.assertEqual(res.data['role'], '현장작업자')
+        self.worker.refresh_from_db()
+        self.assertIsNotNone(self.worker.last_login)  # 사용자 관리 화면의 마지막 로그인
 
     def test_token_refresh(self):
         res = self.client.post('/api/token/', {'username': 'boss', 'password': 'pw-strong-1'})
@@ -922,3 +924,65 @@ class AddressImportTests(BaseCase):
         self.assertEqual(self.client.post(self.URL, {'rows': []}, format='json').status_code, 400)
         self.client.force_authenticate(self.worker)
         self.assertEqual(self.client.post(self.URL, {'rows': self.rows()}, format='json').status_code, 403)
+
+
+class ReorderSuggestionTests(BaseCase):
+    URL = '/api/inventory/purchase-orders/suggestions/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_suggests_shortfall_with_usage_incoming_and_last_supplier(self):
+        # 상품A: 재고 5, 안전 재고 5, 최근 30일 출고 30개(하루 1개) → 목표 5 + 7 = 12, 발주 중 2개 → 제안 5개
+        Item.objects.filter(pk=self.item.pk).update(safety_stock=5)
+        InventoryLog.objects.create(item=self.item, action='OUT', quantity_changed=-30)
+        old = InventoryLog.objects.create(item=self.item, action='OUT', quantity_changed=-100)
+        InventoryLog.objects.filter(pk=old.pk).update(timestamp=timezone.now() - timedelta(days=40))  # 30일 밖은 제외
+        supplier = Supplier.objects.create(name='미래전자')
+        po = PurchaseOrder.objects.create(po_number='PO-1', supplier=supplier, status='입고중')
+        PurchaseOrderItem.objects.create(po=po, item=self.item, order_quantity=3, received_quantity=1)
+        # 상품B: 재고 1이지만 안전 재고 0이고 출고가 없으면 제안하지 않습니다.
+        Item.objects.filter(pk=self.other.pk).update(safety_stock=0)
+
+        res = self.client.get(self.URL)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['lead_days'], 7)
+        self.assertEqual([(r['sku'], r['suggested'], r['incoming'], r['usage_30d'], r['supplier_name']) for r in res.data['rows']],
+                         [('A-1', 5, 2, 30, '미래전자')])
+
+    def test_worker_cannot_see(self):
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+
+class UserManagementTests(BaseCase):
+    URL = '/api/inventory/users/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_create_change_role_and_deactivate(self):
+        res = self.client.post(self.URL, {'username': 'kim', 'name': '김작업', 'role': '현장작업자', 'password': 'Kim-pass-2026'}, format='json')
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertNotIn('password', res.data)
+        user = User.objects.get(username='kim')
+        self.assertTrue(user.check_password('Kim-pass-2026'))
+        self.assertFalse(user.is_staff)
+        self.assertEqual(self.client.patch(f'{self.URL}{user.id}/', {'role': '관리자', 'is_active': False}, format='json').status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual((user.is_staff, user.is_active), (True, False))
+        self.assertEqual(self.client.patch(f'{self.URL}{user.id}/', {'username': 'lee'}, format='json').status_code, 400)
+
+    def test_rules(self):
+        self.assertEqual(self.client.post(self.URL, {'username': 'weak', 'role': '현장작업자', 'password': '1234'}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(f'{self.URL}{self.admin.id}/', {'is_active': False}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(f'{self.URL}{self.admin.id}/', {'role': '현장작업자'}, format='json').status_code, 400)
+        self.assertEqual(self.client.delete(f'{self.URL}{self.worker.id}/').status_code, 405)
+        res = self.client.post(f'{self.URL}{self.worker.id}/reset_password/', {'password': 'Reset-pass-2026'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.worker.refresh_from_db()
+        self.assertTrue(self.worker.check_password('Reset-pass-2026'))
+        self.client.force_authenticate(self.worker)
+        self.assertEqual(self.client.get(self.URL).status_code, 403)

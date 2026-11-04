@@ -121,6 +121,7 @@ const menuGroups = [
     { title: '상품', path: '/items' },
     { title: '보관 위치', path: '/locations' },
     { title: '거래처', path: '/suppliers' },
+    { title: '사용자', path: '/users' },
   ] },
 ]
 

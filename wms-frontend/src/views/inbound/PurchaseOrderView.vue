@@ -1,5 +1,6 @@
 <template>
   <div class="flex flex-col h-full">
+    <ReorderSuggestModal v-if="suggestOpen" @close="suggestOpen = false" @created="fetchPOs" />
     <div v-if="isFormOpen" class="modal-overlay">
       <form class="modal w-[640px]" @submit.prevent="submitPO">
         <div class="modal-header">발주서 등록</div>
@@ -48,7 +49,7 @@
     </div>
 
     <div class="page-split">
-      <div class="panel w-full md:w-[420px] shrink-0">
+      <div class="panel w-full md:w-[500px] shrink-0">
         <div class="panel-header">
           <span class="panel-title">발주서 목록</span>
           <div class="flex gap-1">
@@ -59,6 +60,7 @@
               <option value="입고완료">입고 완료</option>
               <option value="취소됨">취소됨</option>
             </select>
+            <button class="btn btn-sm" @click="suggestOpen = true">발주 제안</button>
             <button class="btn btn-primary btn-sm" @click="openForm">발주 등록</button>
             <button class="btn btn-sm" @click="fetchPOs">새로고침</button>
           </div>
@@ -131,16 +133,19 @@
 
 <script setup>
 import { computed, onActivated, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { useToastStore } from '../../stores/toastStore'
 import { useInventoryStore } from '../../stores/inventory'
 import OrderLinesEditor from '../../components/OrderLinesEditor.vue'
 import ListFilter from '../../components/ListFilter.vue'
+import ReorderSuggestModal from '../../components/ReorderSuggestModal.vue'
 import { useDialogStore } from '../../stores/dialogStore'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const router = useRouter()
+const route = useRoute()
+const suggestOpen = ref(false)
 const toast = useToastStore()
 const store = useInventoryStore()
 const dialog = useDialogStore()
@@ -237,5 +242,12 @@ const cancelPO = async () => {
 
 watch(statusFilter, fetchPOs)
 
-onActivated(fetchPOs)
+// 오늘 할 일의 재고 부족 카드에서 /purchase-order?suggest=1 로 들어오면 발주 제안을 엽니다.
+onActivated(() => {
+  if (route.query.suggest) {
+    suggestOpen.value = true
+    router.replace({ query: {} })
+  }
+  fetchPOs()
+})
 </script>

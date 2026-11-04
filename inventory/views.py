@@ -1,5 +1,6 @@
 import csv
 import logging
+import math
 import re
 from datetime import datetime, time, timedelta
 from time import sleep
@@ -7,6 +8,7 @@ from io import StringIO
 
 import requests # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError, transaction
@@ -28,7 +30,7 @@ from rest_framework.views import APIView
 from . import carrier
 from .carrier import CarrierError
 from .models import Item, ItemSerial, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
-from .serializers import user_display, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
+from .serializers import user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -576,6 +578,39 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return filter_documents(super().get_queryset(), self.request.query_params, 'order_date',
                                 ['po_number', 'supplier__name', 'items__item__sku', 'items__item__name'], date_only=True)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAdminUser])
+    def suggestions(self, request):
+        """발주 제안: (안전 재고 + 하루 평균 출고량 × 조달 기간) − (현재 재고 + 들어올 수량)이 0보다 큰 상품.
+        하루 평균은 최근 30일 출고량으로 계산하고, 거래처는 그 상품을 마지막으로 발주한 곳을 씁니다."""
+        lead_days = settings.REORDER_LEAD_DAYS
+        since = timezone.now() - timedelta(days=30)
+        items = Item.objects.filter(is_active=True).annotate(
+            usage=Coalesce(Sum('logs__quantity_changed', filter=Q(logs__action='OUT', logs__timestamp__gte=since)), 0),
+        )
+        incoming = dict(PurchaseOrderItem.objects.filter(po__status__in=['발주대기', '입고중'])
+                        .values('item').annotate(total=Sum(F('order_quantity') - F('received_quantity'))).values_list('item', 'total'))
+        last_supplier = {}
+        for line in (PurchaseOrderItem.objects.filter(po__supplier__is_active=True).exclude(po__status='취소됨')
+                     .select_related('po__supplier').order_by('item_id', '-po__order_date', '-po_id')):
+            last_supplier.setdefault(line.item_id, line.po.supplier)
+
+        rows = []
+        for item in items:
+            usage = abs(item.usage)
+            target = item.safety_stock + math.ceil(usage / 30 * lead_days)
+            coming = incoming.get(item.id) or 0
+            suggested = target - item.quantity - coming
+            if suggested <= 0:
+                continue
+            supplier = last_supplier.get(item.id)
+            rows.append({
+                'item': item.id, 'sku': item.sku, 'name': item.name, 'quantity': item.quantity,
+                'safety_stock': item.safety_stock, 'incoming': coming, 'usage_30d': usage, 'suggested': suggested,
+                'supplier': supplier.id if supplier else None, 'supplier_name': supplier.name if supplier else '',
+            })
+        rows.sort(key=lambda row: (row['supplier_name'] or '힣', row['quantity'] - row['safety_stock']))
+        return Response({'lead_days': lead_days, 'rows': rows})
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -1396,3 +1431,34 @@ class PasswordChangeView(APIView):
         user.set_password(new)
         user.save(update_fields=['password'])
         return Response({'message': '비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.'})
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    """관리자가 계정을 만들고 권한·사용 여부를 바꿉니다. 이력을 지키기 위해 삭제 대신 사용 중지합니다."""
+    queryset = User.objects.order_by('-is_active', 'username')
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminUser]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def perform_update(self, serializer):
+        user = serializer.instance
+        if user.is_superuser and not self.request.user.is_superuser:
+            raise ValidationError({'error': '최고 관리자 계정은 바꿀 수 없습니다.'})
+        if user == self.request.user and (serializer.validated_data.get('is_active') is False or serializer.validated_data.get('is_staff') is False):
+            raise ValidationError({'error': '자기 계정의 권한을 내리거나 사용 중지할 수 없습니다. 다른 관리자에게 요청하세요.'})
+        serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        # 잊어버린 비밀번호를 관리자가 새로 정해 줍니다. 받은 사람은 로그인 후 직접 바꾸게 안내합니다.
+        user = self.get_object()
+        if user.is_superuser and not request.user.is_superuser:
+            return error_response('최고 관리자 계정은 바꿀 수 없습니다.')
+        password = str(request.data.get('password') or '')
+        try:
+            validate_password(password, user)
+        except DjangoValidationError as exc:
+            return error_response(' '.join(exc.messages))
+        user.set_password(password)
+        user.save(update_fields=['password'])
+        return Response({'message': f'[{user.username}] 비밀번호를 초기화했습니다. 로그인 후 직접 바꾸도록 안내하세요.'})

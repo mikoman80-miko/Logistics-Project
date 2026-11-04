@@ -75,7 +75,7 @@ const cards = [
   { title: '출고 대기', count: () => today.value.orders, hint: '스캔 후 출고할 주문', path: '/orders', color: 'text-primary' },
   { title: '입고 예정', count: () => today.value.purchase_orders, hint: '아직 다 받지 못한 발주', path: '/purchase-order', color: 'text-primary' },
   { title: '반품 회수 대기', count: () => today.value.returns, hint: '돌아올 기기', path: '/returns', color: 'text-warning' },
-  { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품', path: '/stock', color: 'text-danger' },
+  { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품 · 누르면 발주 제안', path: '/purchase-order?suggest=1', color: 'text-danger' },
 ]
 
 const setupSteps = computed(() => [

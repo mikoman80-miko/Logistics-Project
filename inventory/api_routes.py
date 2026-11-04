@@ -13,6 +13,7 @@ from .views import (
     InventoryLedgerAPIView, 
     DashboardAPIView,
     TodayAPIView,
+    UserViewSet,
 )
 
 router = DefaultRouter()
@@ -25,6 +26,7 @@ router.register(r'suppliers', SupplierViewSet) # 🌟 NEW: 거래처 주소
 router.register(r'purchase-orders', PurchaseOrderViewSet) # 🌟 NEW: 발주서 주소
 router.register(r'orders', SalesOrderViewSet)
 router.register(r'returns', ReturnOrderViewSet)
+router.register(r'users', UserViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

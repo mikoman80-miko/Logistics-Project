@@ -1,3 +1,6 @@
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.db.models import Q
@@ -278,3 +281,48 @@ class WarehouseLocationSerializer(serializers.ModelSerializer):
         if same.exists():
             raise serializers.ValidationError({'error': f'이미 등록된 보관 위치입니다: {same.first().full_code}'})
         return attrs
+
+class UserSerializer(serializers.ModelSerializer):
+    # 사용자 관리 화면용. role은 '관리자'(is_staff) 또는 '현장작업자'입니다.
+    role = serializers.ChoiceField(choices=['관리자', '현장작업자'], required=False)
+    password = serializers.CharField(write_only=True, required=False)
+    name = serializers.CharField(source='first_name', required=False, allow_blank=True, max_length=150)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'name', 'role', 'is_active', 'is_superuser', 'last_login', 'date_joined', 'password']
+        read_only_fields = ['is_superuser', 'last_login', 'date_joined']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['role'] = '관리자' if instance.is_staff else '현장작업자'
+        return data
+
+    def validate_username(self, value):
+        if self.instance and value != self.instance.username:
+            raise serializers.ValidationError('사원번호는 바꿀 수 없습니다.')
+        return value
+
+    def validate(self, attrs):
+        if 'role' in attrs:
+            attrs['is_staff'] = attrs.pop('role') == '관리자'
+        if not self.instance:
+            password = attrs.get('password') or ''
+            if not password:
+                raise serializers.ValidationError({'password': '첫 비밀번호를 입력해주세요.'})
+            try:
+                validate_password(password, User(username=attrs.get('username', ''), first_name=attrs.get('first_name', '')))
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'password': list(exc.messages)})
+        return attrs
+
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
+    def update(self, instance, validated_data):
+        validated_data.pop('password', None)  # 비밀번호는 reset_password로만 바꿉니다.
+        return super().update(instance, validated_data)

@@ -291,3 +291,33 @@ test('엑셀 다운로드와 오늘 내 작업, 비밀번호 변경', async () =
   await modal.getByRole('button', { name: '변경' }).click()
   await toast(worker, '비밀번호를 바꿨습니다')
 })
+
+test('재고 부족 카드에서 발주 제안을 열어 발주서 만들기', async () => {
+  await admin.goto('/today')
+  await admin.locator('.today-card', { hasText: '재고 부족' }).click()
+  const modal = admin.locator('.modal', { hasText: '발주 제안' })
+  await expect(modal.locator('tbody tr', { hasText: 'E2E-DEV' })).toBeVisible()
+  await shot(admin, '18-reorder-suggest')
+  const group = modal.locator('div.border', { hasText: 'E2E-DEV' })
+  await group.getByRole('button', { name: '발주서 만들기' }).click()
+  await toast(admin, '등록 완료 (1개 상품)')
+  await modal.getByRole('button', { name: '닫기' }).click()
+})
+
+test('사용자 등록과 사용 중지', async () => {
+  await admin.goto('/users')
+  await admin.locator('label:has-text("사원번호") + input').fill('e2e_new')
+  await admin.locator('label:has-text("이름") + input').fill('새작업자')
+  await admin.locator('label:has-text("첫 비밀번호") + input').fill('E2e-new-pass-1!')
+  await admin.getByRole('button', { name: '사용자 등록' }).click()
+  await toast(admin, '[e2e_new] 사용자를 등록했습니다.')
+  const row = admin.locator('tbody tr', { hasText: 'e2e_new' })
+  await row.getByRole('button', { name: '사용 중지' }).click()
+  await admin.locator('.modal').getByRole('button', { name: '사용 중지' }).click()
+  await toast(admin, '[e2e_new] 사용 중지했습니다.')
+  await expect(row.locator('td').nth(4)).toHaveText('사용 중지')
+  // 로그인한 계정은 마지막 로그인 시각이 남습니다.
+  await expect(admin.locator('tbody tr', { hasText: 'e2e_admin' }).locator('td').nth(3)).not.toHaveText('로그인 기록 없음')
+  await expect(admin.locator('tbody tr', { hasText: 'e2e_admin' }).getByRole('button', { name: '사용 중지' })).toHaveCount(0)
+  await shot(admin, '19-users')
+})

@@ -10,6 +10,7 @@ import ReturnReceivingView from '../views/inbound/ReturnReceivingView.vue'
 import LocationMasterView from '../views/master/LocationMasterView.vue'
 import ItemMasterView from '../views/master/ItemMasterView.vue'
 import SupplierView from '../views/master/SupplierView.vue'
+import UserManageView from '../views/master/UserManageView.vue'
 import PurchaseOrderView from '../views/inbound/PurchaseOrderView.vue'
 import WorkHomeView from '../views/work/WorkHomeView.vue'
 import WorkInboundView from '../views/work/WorkInboundView.vue'
@@ -48,6 +49,7 @@ const router = createRouter({
     { path: '/items', name: 'items', component: ItemMasterView, meta: adminPage('상품') },
     { path: '/locations', name: 'locations', component: LocationMasterView, meta: adminPage('보관 위치') },
     { path: '/suppliers', name: 'suppliers', component: SupplierView, meta: adminPage('거래처') },
+    { path: '/users', name: 'users', component: UserManageView, meta: adminPage('사용자') },
 
     // 예전 주소
     { path: '/picking', redirect: '/orders' },

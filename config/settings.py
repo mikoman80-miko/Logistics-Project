@@ -187,9 +187,16 @@ CARRIER_API_KEY = os.environ.get('CARRIER_API_KEY', '')
 CARRIER_WEBHOOK_SECRET = os.environ.get('CARRIER_WEBHOOK_SECRET', '')
 CARRIER_CALLBACK_URL = os.environ.get('CARRIER_CALLBACK_URL', '')
 
+# 발주 제안: 발주 후 물건이 들어오기까지 걸리는 날 수
+REORDER_LEAD_DAYS = int(os.environ.get('REORDER_LEAD_DAYS', '7'))
+
 # 운영 환경에서 HTTPS를 쓸 때 DJANGO_HTTPS=True로 켭니다.
 if env_bool('DJANGO_HTTPS'):
     SECURE_SSL_REDIRECT = True
     SECURE_HSTS_SECONDS = 31536000
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+# 로그인할 때 마지막 로그인 시각을 남겨 사용자 관리 화면에서 볼 수 있게 합니다.
+SIMPLE_JWT = {
+    'UPDATE_LAST_LOGIN': True,
+}
