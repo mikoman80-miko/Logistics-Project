@@ -632,3 +632,17 @@ test('순환 재고 조사: 반영한 위치는 오늘 완료로, 스캔이 모�
   await admin.goto('/today')
   await expect(admin.locator('.today-card', { hasText: '순환 재고 조사' })).toContainText('1곳 완료')
 })
+
+test('기준정보 변경 이력: 앞에서 바꾼 상품·사용자 기록 확인', async () => {
+  await admin.goto('/changes')
+  await admin.getByRole('button', { name: '상품', exact: true }).click()
+  const itemRow = admin.locator('tbody tr', { hasText: 'E2E-CABLE' }).filter({ hasText: '보충 최소' }).first()
+  await expect(itemRow).toContainText('99')
+  await expect(itemRow).toContainText('테스트관리자')
+  await admin.getByRole('button', { name: '사용자', exact: true }).click()
+  await expect(admin.locator('tbody tr', { hasText: '사원증 발급' }).first()).toContainText('e2e_worker')
+  await admin.locator('input[placeholder^="대상"]').fill('e2e_worker')
+  await admin.getByRole('button', { name: '검색' }).click()
+  await expect(admin.locator('tbody tr').first()).toContainText('e2e_worker')
+  await shot(admin, '33-change-history')
+})

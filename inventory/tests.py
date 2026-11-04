@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import DailyClose, InventoryLog, Item, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import DailyClose, InventoryLog, Item, MasterChange, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -1471,3 +1471,46 @@ class CycleCountTests(BaseCase):
         self.assertIsNone(WarehouseLocation.objects.get(pk=self.locs[0].pk).last_counted_at)
         res = self.client.post(f'{ITEMS}audit_scan/', {'location': self.locs[0].id, 'codes': ['A-1', 'A-1'], 'apply': True}, format='json')
         self.assertTrue(res.data['counted'])
+
+
+class MasterChangeTests(BaseCase):
+    URL = '/api/inventory/changes/'
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def test_item_create_update_delete_are_recorded(self):
+        res = self.client.post(ITEMS, {'sku': 'N-1', 'name': '새상품', 'item_type': '부자재', 'quantity': 0, 'safety_stock': 3}, format='json')
+        item_id = res.data['id']
+        self.client.patch(f'{ITEMS}{item_id}/', {'name': '고친상품', 'safety_stock': 4}, format='json')
+        self.client.patch(f'{ITEMS}{item_id}/', {'name': '고친상품'}, format='json')  # 바뀐 것 없음 → 기록 안 함
+        self.client.delete(f'{ITEMS}{item_id}/')
+        rows = self.client.get(self.URL, {'target': '상품'}).data['results']
+        self.assertEqual([r['action'] for r in rows], ['사용 중지', '수정', '등록'])
+        self.assertEqual(rows[1]['changes'], {'상품명': ['새상품', '고친상품'], '안전 재고': ['3', '4']})
+        self.assertEqual(rows[2]['changes']['상품코드'], ['', 'N-1'])
+        self.assertEqual(rows[0]['changes'], {'사용': ['예', '아니오']})
+        self.assertEqual(rows[0]['user'], user_display_name(self.admin))
+
+    def test_location_supplier_user_and_filters(self):
+        loc = self.client.post('/api/inventory/locations/', {'zone': 'Z', 'rack': 'R1', 'tier': 1}, format='json').data
+        self.client.delete(f'/api/inventory/locations/{loc["id"]}/')
+        self.client.post('/api/inventory/suppliers/', {'name': '공급사'}, format='json')
+        self.client.patch(f'/api/inventory/users/{self.worker.id}/', {'role': '관리자'}, format='json')
+        self.client.post(f'/api/inventory/users/{self.admin.id}/reset_password/', {'password': 'Another-pass-123'}, format='json')
+        actions = [(r['target'], r['action']) for r in self.client.get(self.URL).data['results']]
+        self.assertEqual(actions, [('사용자', '비밀번호 초기화'), ('사용자', '수정'), ('거래처', '등록'), ('위치', '삭제'), ('위치', '등록')])
+        user_change = self.client.get(self.URL, {'target': '사용자', 'q': 'worker'}).data['results'][0]
+        self.assertEqual(user_change['changes'], {'관리자 권한': ['아니오', '예']})
+        self.assertEqual(self.client.get(self.URL, {'start_date': '2000-01-01', 'end_date': '2000-01-02'}).data['count'], 0)
+        self.client.force_authenticate(self.worker)
+        self.worker.refresh_from_db()
+        self.worker.is_staff = False
+        self.worker.save()
+        self.assertEqual(self.client.get(self.URL).status_code, 403)
+
+
+def user_display_name(user):
+    from .serializers import user_display
+    return user_display(user)

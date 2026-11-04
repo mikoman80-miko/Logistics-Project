@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ItemViewSet, 
     WorkerReportAPIView,
+    MasterChangeViewSet,
     DailyCloseAPIView,
     InventoryLogViewSet, 
     ItemSerialViewSet, 
@@ -29,6 +30,7 @@ router.register(r'purchase-orders', PurchaseOrderViewSet) # 🌟 NEW: 발주서 
 router.register(r'orders', SalesOrderViewSet)
 router.register(r'returns', ReturnOrderViewSet)
 router.register(r'users', UserViewSet)
+router.register(r'changes', MasterChangeViewSet, basename='changes')
 
 urlpatterns = [
     path('', include(router.urls)),

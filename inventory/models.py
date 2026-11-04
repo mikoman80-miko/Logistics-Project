@@ -294,3 +294,18 @@ class DailyClose(models.Model):
 
     class Meta:
         ordering = ['-date']
+
+
+class MasterChange(models.Model):
+    # 기준정보(상품·위치·거래처·카테고리·사용자) 변경 이력. changes는 {칸 이름: [이전 값, 새 값]}입니다.
+    target = models.CharField(max_length=10)
+    object_id = models.PositiveIntegerField()
+    label = models.CharField(max_length=200)
+    action = models.CharField(max_length=20)
+    changes = models.JSONField(default=dict)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp', '-id']
+        indexes = [models.Index(fields=['target', 'object_id'], name='change_target_idx')]

@@ -56,6 +56,7 @@ const router = createRouter({
     { path: '/locations', name: 'locations', component: LocationMasterView, meta: adminPage('보관 위치') },
     { path: '/suppliers', name: 'suppliers', component: SupplierView, meta: adminPage('거래처') },
     { path: '/users', name: 'users', component: UserManageView, meta: adminPage('사용자') },
+    { path: '/changes', name: 'changes', component: () => import('../views/master/ChangeHistoryView.vue'), meta: adminPage('변경 이력') },
 
     // 예전 주소
     { path: '/picking', redirect: '/orders' },

@@ -124,6 +124,7 @@ const menuGroups = [
     { title: '보관 위치', path: '/locations' },
     { title: '거래처', path: '/suppliers' },
     { title: '사용자', path: '/users' },
+    { title: '변경 이력', path: '/changes' },
   ] },
 ]
 

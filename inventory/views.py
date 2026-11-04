@@ -30,9 +30,10 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from . import carrier, due, stock
+from . import audit, carrier, due, stock
+from .audit import AuditMixin
 from .carrier import CarrierError
-from .models import DailyClose, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import DailyClose, MasterChange, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -363,13 +364,13 @@ class InventoryLedgerAPIView(APIView):
         return Response(ledger_data, status=status.HTTP_200_OK)
 
 
-class CategoryViewSet(viewsets.ModelViewSet):
+class CategoryViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Category.objects.filter(parent__isnull=True).order_by('name')
     serializer_class = CategorySerializer
     permission_classes = [IsAdminRole]
 
 
-class ItemViewSet(viewsets.ModelViewSet):
+class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Item.objects.select_related('category', 'location').prefetch_related('stocks__location').filter(is_active=True).annotate(
         in_stock_serials=Count('serials', filter=Q(serials__status=IN_STOCK)))
     serializer_class = ItemSerializer
@@ -508,12 +509,14 @@ class ItemViewSet(viewsets.ModelViewSet):
 
         item = Item.objects.select_for_update().get(pk=item.pk)
         old_location = item.location
+        before = audit.snapshot(item)
         moved = stock.at(item, old_location) if old_location else stock.unassigned(item)
         if moved:
             stock.move(item, moved, old_location, new_location)
         item.serials.filter(status=IN_STOCK, location=old_location).update(location=new_location)
         item.location = new_location
         item.save(update_fields=['location'])
+        audit.record(request.user, item, '수정', before)
         old_location_str = old_location.full_code if old_location else '미지정'
         InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개", user=request.user, work='이동')
         return Response({'message': '보관 위치 이동 완료', 'location': new_location.full_code})
@@ -581,6 +584,7 @@ class ItemViewSet(viewsets.ModelViewSet):
         ItemStock.objects.filter(item=item).delete()  # 다시 등록한 수량으로 새로 시작합니다.
         stock.add(item, item.quantity)
         InventoryLog.objects.create(item=item, action='NEW', quantity_changed=item.quantity, description='사용 중지 상품 재등록', user=request.user)
+        audit.record(request.user, item, '재등록')
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def perform_destroy(self, instance):
@@ -750,7 +754,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 
 
 # 🌟 NEW: 공급사(거래처) API
-class SupplierViewSet(viewsets.ModelViewSet):
+class SupplierViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = Supplier.objects.all().order_by('name')
     serializer_class = SupplierSerializer
     permission_classes = [IsAdminRole]
@@ -1396,6 +1400,35 @@ class LogPagination(PageNumberPagination):
     max_page_size = 200
 
 
+class MasterChangeViewSet(viewsets.ReadOnlyModelViewSet):
+    """기준정보 변경 이력. ?target=상품&q=검색어&start_date&end_date&object_id="""
+    queryset = MasterChange.objects.select_related('user')
+    permission_classes = [IsAdminUser]
+    pagination_class = LogPagination
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+        if params.get('target'):
+            queryset = queryset.filter(target=params['target'])
+        if params.get('object_id'):
+            queryset = queryset.filter(object_id=to_int(params['object_id']))
+        if params.get('q'):
+            queryset = queryset.filter(Q(label__icontains=params['q']) | Q(user__username__icontains=params['q']) | Q(user__first_name__icontains=params['q']))
+        start, end = parse_date_param(params.get('start_date')), parse_date_param(params.get('end_date'))
+        if start:
+            queryset = queryset.filter(timestamp__gte=day_start(start))
+        if end:
+            queryset = queryset.filter(timestamp__lt=day_start(end + timedelta(days=1)))
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        page = self.paginate_queryset(self.get_queryset())
+        rows = [{'id': c.id, 'timestamp': timezone.localtime(c.timestamp).isoformat(), 'target': c.target, 'object_id': c.object_id,
+                 'label': c.label, 'action': c.action, 'changes': c.changes, 'user': user_display(c.user) if c.user else ''} for c in page]
+        return self.get_paginated_response(rows)
+
+
 class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = InventoryLog.objects.select_related('item', 'user').order_by('-timestamp', '-id')
     serializer_class = InventoryLogSerializer
@@ -1525,7 +1558,7 @@ class ItemSerialViewSet(viewsets.ModelViewSet):
         return Response({'message': f'{len(serials)}건 변경 완료', 'count': len(serials)})
 
 
-class WarehouseLocationViewSet(viewsets.ModelViewSet):
+class WarehouseLocationViewSet(AuditMixin, viewsets.ModelViewSet):
     queryset = WarehouseLocation.objects.all().order_by('zone', 'rack', 'tier')
     serializer_class = WarehouseLocationSerializer
     permission_classes = [IsAdminRole]
@@ -1952,7 +1985,7 @@ class PasswordChangeView(APIView):
         return Response({'message': '비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.'})
 
 
-class UserViewSet(viewsets.ModelViewSet):
+class UserViewSet(AuditMixin, viewsets.ModelViewSet):
     """관리자가 계정을 만들고 권한·사용 여부를 바꿉니다. 이력을 지키기 위해 삭제 대신 사용 중지합니다."""
     queryset = User.objects.order_by('-is_active', 'username')
     serializer_class = UserSerializer
@@ -1975,6 +2008,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return error_response('관리자 계정은 사원증으로 로그인할 수 없습니다. 현장작업자 계정에 발급하세요.')
         code = 'EMP-' + ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(12))
         WorkerBadge.objects.update_or_create(user=user, defaults={'code': code})
+        audit.record(request.user, user, '사원증 발급', after={})
         return Response({'message': f'[{user.username}] 사원증을 발급했습니다. 예전 사원증은 더 이상 쓸 수 없습니다.',
                          'code': code, 'username': user.username, 'name': user.first_name})
 
@@ -1991,6 +2025,7 @@ class UserViewSet(viewsets.ModelViewSet):
             return error_response(' '.join(exc.messages))
         user.set_password(password)
         user.save(update_fields=['password'])
+        audit.record(request.user, user, '비밀번호 초기화', after={})
         return Response({'message': f'[{user.username}] 비밀번호를 초기화했습니다. 로그인 후 직접 바꾸도록 안내하세요.'})
 
 
