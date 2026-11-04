@@ -112,7 +112,13 @@ const placeLine = (line, target) => {
   else putaway.value[line.id] = target
 }
 
-const scanLocation = (code) => {
+const loadLocations = async () => {
+  locations.value = (await axios.get('/api/inventory/locations/')).data.filter(loc => loc.is_active)
+}
+
+const scanLocation = async (code) => {
+  // 화면을 연 직후라 위치 목록이 아직 없으면 지금 불러옵니다.
+  if (!locations.value.some(loc => loc.barcode === code)) await loadLocations()
   const target = locations.value.find(loc => loc.barcode === code)
   if (!target) return fail(`[${code}] 등록되지 않은 위치 라벨입니다.`)
   pendingPlace.value = target
@@ -191,8 +197,5 @@ const leave = async () => {
   await load()
 }
 
-onMounted(async () => {
-  await load()
-  locations.value = (await axios.get('/api/inventory/locations/')).data.filter(loc => loc.is_active)
-})
+onMounted(() => Promise.all([load(), loadLocations()]))
 </script>

@@ -1,6 +1,7 @@
 import csv
 import logging
 import math
+import secrets
 from collections import Counter
 import re
 from datetime import datetime, time, timedelta
@@ -9,7 +10,7 @@ from io import StringIO
 
 import requests # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError, transaction
@@ -27,10 +28,11 @@ from rest_framework.permissions import AllowAny, BasePermission, IsAdminUser, Is
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import carrier, stock
 from .carrier import CarrierError
-from .models import Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
+from .models import WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
 from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
 
 logger = logging.getLogger(__name__)
@@ -1668,6 +1670,17 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     @action(detail=True, methods=['post'])
+    def issue_badge(self, request, pk=None):
+        # 사원증 코드를 새로 만듭니다. 다시 발급하면 예전 사원증은 쓸 수 없습니다. 관리자 계정은 비밀번호로만 로그인합니다.
+        user = self.get_object()
+        if user.is_staff:
+            return error_response('관리자 계정은 사원증으로 로그인할 수 없습니다. 현장작업자 계정에 발급하세요.')
+        code = 'EMP-' + ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(12))
+        WorkerBadge.objects.update_or_create(user=user, defaults={'code': code})
+        return Response({'message': f'[{user.username}] 사원증을 발급했습니다. 예전 사원증은 더 이상 쓸 수 없습니다.',
+                         'code': code, 'username': user.username, 'name': user.first_name})
+
+    @action(detail=True, methods=['post'])
     def reset_password(self, request, pk=None):
         # 잊어버린 비밀번호를 관리자가 새로 정해 줍니다. 받은 사람은 로그인 후 직접 바꾸게 안내합니다.
         user = self.get_object()
@@ -1681,3 +1694,22 @@ class UserViewSet(viewsets.ModelViewSet):
         user.set_password(password)
         user.save(update_fields=['password'])
         return Response({'message': f'[{user.username}] 비밀번호를 초기화했습니다. 로그인 후 직접 바꾸도록 안내하세요.'})
+
+
+class BadgeLoginView(APIView):
+    """사원증 바코드로 로그인합니다. 현장작업자 계정만 되며, 비밀번호 로그인과 같은 횟수 제한을 둡니다."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
+
+    def post(self, request):
+        code = clean_code(request.data.get('code'))
+        badge = WorkerBadge.objects.select_related('user').filter(code=code).first() if code else None
+        user = badge.user if badge else None
+        if not user or not user.is_active or user.is_staff:
+            return error_response('등록되지 않았거나 쓸 수 없는 사원증입니다.', status.HTTP_401_UNAUTHORIZED)
+        refresh = RefreshToken.for_user(user)
+        update_last_login(None, user)
+        return Response({'access': str(refresh.access_token), 'refresh': str(refresh), 'role': '현장작업자',
+                         'username': user.username, 'name': user.first_name})

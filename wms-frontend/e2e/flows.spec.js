@@ -20,7 +20,7 @@ async function login(browser, username, password, landing) {
   const page = await context.newPage()
   await page.goto('/login')
   await page.locator('input[type=text]').fill(username)
-  await page.locator('input[type=password]').fill(password)
+  await page.locator('.login-table input[type=password]').fill(password)
   await page.getByRole('button', { name: '시스템 접속' }).click()
   await expect(page).toHaveURL(landing)
   return page
@@ -77,7 +77,7 @@ test.beforeAll(async ({ browser }) => {
 test('로그인 실패 안내', async ({ page }) => {
   await page.goto('/login')
   await page.locator('input[type=text]').fill('e2e_admin')
-  await page.locator('input[type=password]').fill('wrong-password')
+  await page.locator('.login-table input[type=password]').fill('wrong-password')
   await page.getByRole('button', { name: '시스템 접속' }).click()
   await expect(page.getByText('사원번호 또는 비밀번호를 확인하십시오.')).toBeVisible()
   await shot(page, '01-login-error')
@@ -445,4 +445,28 @@ test('입고 예정일이 지난 발주를 오늘 할 일에서 열기', async (
   await panel.locator('tbody tr').first().click()
   await expect(admin).toHaveURL(/\/purchase-order$/)
   await expect(admin.locator('.panel-title', { hasText: `입고 예정일: ${yesterday}` })).toBeVisible()
+})
+
+test('사원증 발급 → 현장 화면에서 작업자 전환', async () => {
+  await admin.goto('/users')
+  await admin.locator('tbody tr', { hasText: 'e2e_worker' }).getByRole('button', { name: '사원증 발급' }).click()
+  const [issued] = await Promise.all([
+    admin.waitForResponse(res => res.url().includes('/issue_badge/')),
+    admin.locator('.modal').getByRole('button', { name: '발급' }).click(),
+  ])
+  const { code } = await issued.json()
+  await expect(admin.locator('.modal', { hasText: '사원증 인쇄' })).toBeVisible()
+  await shot(admin, '26-badge-card')
+  await admin.locator('.modal', { hasText: '사원증 인쇄' }).getByRole('button', { name: '닫기' }).click()
+
+  await worker.goto('/work')
+  await worker.getByRole('button', { name: '작업자 전환' }).click()
+  const dialog = worker.locator('.work-dialog')
+  await dialog.locator('input').fill('EMP-WRONGCODE')
+  await dialog.locator('input').press('Enter')
+  await expect(dialog).toContainText('쓸 수 없는 사원증')
+  await dialog.locator('input').fill(code)
+  await dialog.locator('input').press('Enter')
+  await toast(worker, '테스트작업자 님으로 바뀌었습니다.')
+  await expect(worker).toHaveURL(/\/work$/)
 })

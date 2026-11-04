@@ -1,5 +1,6 @@
 <template>
   <div class="page">
+    <BadgeCardModal v-if="badge" :badge="badge" @close="badge = null" />
     <div class="panel p-2.5">
       <form class="toolbar" @submit.prevent="addUser">
         <label class="field-label">사원번호</label>
@@ -32,7 +33,7 @@
               <th width="130">권한</th>
               <th width="190">마지막 로그인</th>
               <th width="100">상태</th>
-              <th width="270">관리</th>
+              <th width="370">관리</th>
             </tr>
           </thead>
           <tbody>
@@ -50,6 +51,7 @@
               <td class="text-center">
                 <button class="btn btn-sm" :disabled="user.is_superuser && !iAmSuperuser" @click="rename(user)">이름 변경</button>
                 <button class="btn btn-sm ml-1" :disabled="user.is_superuser && !iAmSuperuser" @click="resetPassword(user)">비밀번호 초기화</button>
+                <button v-if="user.role === '현장작업자' && user.is_active" class="btn btn-sm ml-1" @click="issueBadge(user)">{{ user.has_badge ? '사원증 재발급' : '사원증 발급' }}</button>
                 <button v-if="user.id !== me && !user.is_superuser" class="btn btn-sm ml-1" :class="{ 'btn-danger': user.is_active }"
                   @click="toggleActive(user)">{{ user.is_active ? '사용 중지' : '다시 사용' }}</button>
               </td>
@@ -68,11 +70,13 @@ import { useToastStore } from '../../stores/toastStore'
 import { useDialogStore } from '../../stores/dialogStore'
 import { useAuthStore } from '../../stores/auth'
 import { apiErrorMessage } from '../../utils/apiError'
+import BadgeCardModal from '../../components/BadgeCardModal.vue'
 
 const toast = useToastStore()
 const dialog = useDialogStore()
 const authStore = useAuthStore()
 const users = ref([])
+const badge = ref(null)
 const isSaving = ref(false)
 const emptyForm = () => ({ username: '', name: '', role: '현장작업자', password: '' })
 const form = ref(emptyForm())
@@ -128,6 +132,22 @@ const resetPassword = async (user) => {
     toast.addToast(res.data.message, 'success', 6000)
   } catch (err) {
     toast.addToast(apiErrorMessage(err, '비밀번호 초기화 중 오류가 발생했습니다.'), 'error', 6000)
+  }
+}
+
+const issueBadge = async (user) => {
+  const message = user.has_badge
+    ? `[${user.username}] 사원증을 다시 발급합니다.
+지금 쓰는 사원증은 더 이상 쓸 수 없습니다.`
+    : `[${user.username}] 사원증을 발급합니다. 발급 후 바로 인쇄하세요.`
+  if (!(await dialog.confirm(message, { title: '사원증 발급', okText: '발급' }))) return
+  try {
+    const res = await axios.post(`/api/inventory/users/${user.id}/issue_badge/`)
+    toast.addToast(res.data.message, 'success', 6000)
+    badge.value = res.data
+    await load()
+  } catch (err) {
+    toast.addToast(apiErrorMessage(err, '사원증 발급 중 오류가 발생했습니다.'), 'error', 6000)
   }
 }
 

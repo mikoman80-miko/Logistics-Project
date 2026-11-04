@@ -339,10 +339,14 @@ class UserSerializer(serializers.ModelSerializer):
     role = serializers.ChoiceField(choices=['관리자', '현장작업자'], required=False)
     password = serializers.CharField(write_only=True, required=False)
     name = serializers.CharField(source='first_name', required=False, allow_blank=True, max_length=150)
+    has_badge = serializers.SerializerMethodField()
+
+    def get_has_badge(self, obj):
+        return hasattr(obj, 'badge')
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'name', 'role', 'is_active', 'is_superuser', 'last_login', 'date_joined', 'password']
+        fields = ['id', 'username', 'name', 'role', 'is_active', 'is_superuser', 'last_login', 'date_joined', 'password', 'has_badge']
         read_only_fields = ['is_superuser', 'last_login', 'date_joined']
 
     def to_representation(self, instance):

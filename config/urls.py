@@ -4,7 +4,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from inventory.serializers import RoleTokenObtainPairSerializer
-from inventory.views import CarrierWebhookView, PasswordChangeView
+from inventory.views import BadgeLoginView, CarrierWebhookView, PasswordChangeView
 
 
 class LoginView(TokenObtainPairView):
@@ -20,4 +20,5 @@ urlpatterns = [
     path('api/account/password/', PasswordChangeView.as_view(), name='password_change'),
     path('api/token/', LoginView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/badge/', BadgeLoginView.as_view(), name='token_badge'),
 ]

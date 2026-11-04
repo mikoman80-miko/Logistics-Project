@@ -1205,3 +1205,33 @@ class LocationStockTests(BaseCase):
         self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': -2}, format='json')
         self.client.post(f'{ITEMS}{self.item.id}/adjust_stock/', {'change': 4}, format='json')
         self.assertEqual(self.stocks(self.item), {'A-R1-1단': 7})
+
+
+class BadgeLoginTests(BaseCase):
+    URL = '/api/token/badge/'
+
+    def issue(self, user):
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(f'/api/inventory/users/{user.id}/issue_badge/')
+        self.client.force_authenticate(None)
+        return res
+
+    def test_worker_logs_in_with_badge_and_reissue_invalidates_old(self):
+        old = self.issue(self.worker).data['code']
+        self.assertRegex(old, r'^EMP-[A-Z2-9]{12}$')
+        res = self.client.post(self.URL, {'code': old})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual((res.data['role'], res.data['username']), ('현장작업자', 'worker'))
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+        self.assertEqual(self.client.get('/api/inventory/today/').status_code, 200)
+        self.client.credentials()
+        new = self.issue(self.worker).data['code']
+        self.assertEqual(self.client.post(self.URL, {'code': old}).status_code, 401)
+        self.assertEqual(self.client.post(self.URL, {'code': new}).status_code, 200)
+
+    def test_admin_and_inactive_cannot_use_badge(self):
+        self.assertEqual(self.issue(self.admin).status_code, 400)
+        code = self.issue(self.worker).data['code']
+        User.objects.filter(pk=self.worker.pk).update(is_active=False)
+        self.assertEqual(self.client.post(self.URL, {'code': code}).status_code, 401)
+        self.assertEqual(self.client.post(self.URL, {'code': 'EMP-WRONG'}).status_code, 401)

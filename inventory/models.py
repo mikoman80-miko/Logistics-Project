@@ -264,3 +264,10 @@ class CarrierEvent(models.Model):
 
     class Meta:
         ordering = ['occurred_at', 'id']
+
+
+class WorkerBadge(models.Model):
+    # 현장작업자 사원증 바코드. 추측할 수 없는 코드를 발급하고, 잃어버리면 재발급해 예전 코드를 무효로 만듭니다.
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='badge')
+    code = models.CharField(max_length=32, unique=True)
+    created_at = models.DateTimeField(auto_now=True)
