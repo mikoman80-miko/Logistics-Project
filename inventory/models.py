@@ -1,5 +1,8 @@
+import hashlib
+
 from django.conf import settings
 from django.db import models
+
 
 class Category(models.Model):
     name = models.CharField(max_length=100)
@@ -8,8 +11,9 @@ class Category(models.Model):
 
     def __str__(self):
         if self.parent:
-            return f"{self.parent} > {self.name}"
+            return f'{self.parent} > {self.name}'
         return self.name
+
 
 class WarehouseLocation(models.Model):
     zone = models.CharField(max_length=50)
@@ -23,8 +27,8 @@ class WarehouseLocation(models.Model):
     @property
     def full_code(self):
         if self.cell:
-            return f"{self.zone}-{self.rack}-{self.tier}단-{self.cell}"
-        return f"{self.zone}-{self.rack}-{self.tier}단"
+            return f'{self.zone}-{self.rack}-{self.tier}단-{self.cell}'
+        return f'{self.zone}-{self.rack}-{self.tier}단'
 
     @property
     def barcode(self):
@@ -33,6 +37,7 @@ class WarehouseLocation(models.Model):
 
     def __str__(self):
         return self.full_code
+
 
 class Item(models.Model):
     TYPE_CHOICES = [
@@ -43,21 +48,21 @@ class Item(models.Model):
     ]
     sku = models.CharField(max_length=100, unique=True)
     item_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='상품')
-    serial_tracked = models.BooleanField(default=True) # 켜면 입출고 때 시리얼을 스캔합니다. 상품별로 언제든 바꿀 수 있습니다.
+    serial_tracked = models.BooleanField(default=True)  # 켜면 입출고 때 시리얼을 스캔합니다. 상품별로 언제든 바꿀 수 있습니다.
     name = models.CharField(max_length=200)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='items')
     quantity = models.IntegerField(default=0)
     location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True, related_name='items')
-    
+
     # 🌟 NEW: 재고 분석 및 알림을 위한 필드 추가
-    safety_stock = models.IntegerField(default=5) # 안전 재고 (이하로 떨어지면 슬랙 알림)
+    safety_stock = models.IntegerField(default=5)  # 안전 재고 (이하로 떨어지면 슬랙 알림)
     # 위치 보충: 기본 위치(꺼내는 자리)의 재고가 최소 이하로 내려가면 다른 위치에서 최대까지 채우라고 안내합니다. 0이면 쓰지 않습니다.
     pick_min = models.PositiveIntegerField(default=0)
     pick_max = models.PositiveIntegerField(default=0)
     low_stock_alerted = models.BooleanField(default=False)  # 재고 부족 알림을 보냈는지. 안전 재고 위로 올라오면 다시 꺼집니다.
-    abc_grade = models.CharField(max_length=10, blank=True, null=True) # A, B, C 등급 (장기 체화 분석용)
-    is_active = models.BooleanField(default=True) # 삭제해도 이력을 남기기 위해 사용 중지로 처리
-    
+    abc_grade = models.CharField(max_length=10, blank=True, null=True)  # A, B, C 등급 (장기 체화 분석용)
+    is_active = models.BooleanField(default=True)  # 삭제해도 이력을 남기기 위해 사용 중지로 처리
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -66,7 +71,7 @@ class Item(models.Model):
         ]
 
     def __str__(self):
-        return f"[{self.sku}] {self.name}"
+        return f'[{self.sku}] {self.name}'
 
     def save(self, *args, **kwargs):
         if self.low_stock_alerted and self.quantity > self.safety_stock:
@@ -78,6 +83,7 @@ class Item(models.Model):
 
 class ItemStock(models.Model):
     """위치별 재고. 상품의 총재고(Item.quantity)에서 위치별 합을 뺀 나머지는 '위치 미지정' 재고입니다."""
+
     item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name='stocks')
     location = models.ForeignKey(WarehouseLocation, on_delete=models.PROTECT, related_name='stocks')
     quantity = models.PositiveIntegerField(default=0)
@@ -87,6 +93,7 @@ class ItemStock(models.Model):
 
     def __str__(self):
         return f'{self.item.sku} @ {self.location.full_code}: {self.quantity}'
+
 
 # 🌟 NEW: 거래처(공급사) 모델
 class Supplier(models.Model):
@@ -99,23 +106,20 @@ class Supplier(models.Model):
     def __str__(self):
         return self.name
 
+
 # 🌟 NEW: 정규 발주서(PO) 모델
 class PurchaseOrder(models.Model):
     po_number = models.CharField(max_length=50, unique=True)
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, related_name='purchase_orders')
-    
-    STATUS_CHOICES = [
-        ('발주대기', '발주대기'),
-        ('입고중', '입고중'),
-        ('입고완료', '입고완료'),
-        ('취소됨', '취소됨')
-    ]
+
+    STATUS_CHOICES = [('발주대기', '발주대기'), ('입고중', '입고중'), ('입고완료', '입고완료'), ('취소됨', '취소됨')]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='발주대기')
     order_date = models.DateField(auto_now_add=True)
     expected_date = models.DateField(blank=True, null=True)
-    
+
     def __str__(self):
         return self.po_number
+
 
 # 🌟 NEW: 발주서 상세 품목 모델
 class PurchaseOrderItem(models.Model):
@@ -135,7 +139,8 @@ class PurchaseOrderItem(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.po.po_number} - {self.item.name}"
+        return f'{self.po.po_number} - {self.item.name}'
+
 
 class ShippingInfo(models.Model):
     # 택배 연동에 쓰는 주소와 운송장. 주문에서는 수령인, 반품에서는 회수할 고객입니다.
@@ -157,11 +162,7 @@ class ShippingInfo(models.Model):
 
 
 class SalesOrder(ShippingInfo):
-    STATUS_CHOICES = [
-        ('출고대기', '출고대기'),
-        ('출고완료', '출고완료'),
-        ('취소됨', '취소됨')
-    ]
+    STATUS_CHOICES = [('출고대기', '출고대기'), ('출고완료', '출고완료'), ('취소됨', '취소됨')]
     order_no = models.CharField(max_length=50, unique=True)
     customer = models.CharField(max_length=100)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='출고대기', db_index=True)
@@ -178,11 +179,12 @@ class SalesOrder(ShippingInfo):
     def __str__(self):
         return self.order_no
 
+
 class SalesOrderItem(models.Model):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='items')
     item = models.ForeignKey(Item, on_delete=models.PROTECT)
     quantity = models.IntegerField()
-    picked_quantity = models.IntegerField(default=0) # 스캔으로 확인한 수량
+    picked_quantity = models.IntegerField(default=0)  # 스캔으로 확인한 수량
 
     class Meta:
         constraints = [
@@ -190,13 +192,14 @@ class SalesOrderItem(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.order.order_no} - {self.item.name}"
+        return f'{self.order.order_no} - {self.item.name}'
+
 
 class ItemSerial(models.Model):
     item = models.ForeignKey(Item, related_name='serials', on_delete=models.PROTECT)
     serial_number = models.CharField(max_length=100, unique=True)
     lot_number = models.CharField(max_length=100, blank=True, null=True)
-    
+
     STATUS_CHOICES = [
         ('입고대기', '입고대기'),
         ('재고보유', '재고보유'),
@@ -206,13 +209,8 @@ class ItemSerial(models.Model):
         ('분실', '분실'),  # 재고 조사에서 찾지 못한 기기
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='재고보유')
-    
-    QUALITY_CHOICES = [
-        ('신규상품', '신규상품'),
-        ('양품A급', '양품A급'),
-        ('양품B급', '양품B급'),
-        ('사용불가', '사용불가')
-    ]
+
+    QUALITY_CHOICES = [('신규상품', '신규상품'), ('양품A급', '양품A급'), ('양품B급', '양품B급'), ('사용불가', '사용불가')]
     quality = models.CharField(max_length=20, choices=QUALITY_CHOICES, default='신규상품')
     location = models.ForeignKey(WarehouseLocation, on_delete=models.SET_NULL, null=True, blank=True, related_name='serials')
     # 발주 입고로 들어온 시리얼이면 그 발주 품목. 입고 취소 때 어느 발주로 들어왔는지 확인합니다.
@@ -221,7 +219,8 @@ class ItemSerial(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.item.name} - S/N: {self.serial_number}"
+        return f'{self.item.name} - S/N: {self.serial_number}'
+
 
 class SalesOrderSerial(models.Model):
     # 출고 스캔으로 주문 품목에 묶인 시리얼
@@ -233,12 +232,9 @@ class SalesOrderSerial(models.Model):
             models.UniqueConstraint(fields=['line', 'serial'], name='unique_line_serial'),
         ]
 
+
 class ReturnOrder(ShippingInfo):
-    STATUS_CHOICES = [
-        ('회수대기', '회수대기'),
-        ('회수완료', '회수완료'),
-        ('취소됨', '취소됨')
-    ]
+    STATUS_CHOICES = [('회수대기', '회수대기'), ('회수완료', '회수완료'), ('취소됨', '취소됨')]
     return_no = models.CharField(max_length=50, unique=True)
     customer = models.CharField(max_length=100)
     reason = models.CharField(max_length=100)
@@ -256,13 +252,14 @@ class ReturnOrder(ShippingInfo):
     def __str__(self):
         return self.return_no
 
+
 class InventoryLog(models.Model):
     item = models.ForeignKey(Item, related_name='logs', on_delete=models.PROTECT)
     action = models.CharField(max_length=10)
     quantity_changed = models.IntegerField()
     timestamp = models.DateTimeField(auto_now_add=True)
     description = models.CharField(max_length=200, blank=True, null=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+') # 처리자
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')  # 처리자
     # 작업 종류와 문서 번호. 작업자별 실적을 셀 때 씁니다. (재고 등록·삭제처럼 업무 작업이 아닌 기록은 빈 값)
     WORK_CHOICES = [('입고', '입고'), ('입고취소', '입고취소'), ('출고', '출고'), ('반품', '반품'), ('이동', '이동'), ('조정', '조정')]
     work = models.CharField(max_length=10, choices=WORK_CHOICES, blank=True, default='')
@@ -275,6 +272,7 @@ class InventoryLog(models.Model):
             models.Index(fields=['item', '-timestamp'], name='log_item_time_idx'),
             models.Index(fields=['action', '-timestamp'], name='log_action_time_idx'),
         ]
+
 
 class CarrierEvent(models.Model):
     # 택배사에서 받은 배송·회수 단계 이력. 같은 알림이 두 번 와도 한 번만 저장합니다.
@@ -292,10 +290,14 @@ class CarrierEvent(models.Model):
 
 class WorkerBadge(models.Model):
     # 현장작업자 사원증 바코드. 추측할 수 없는 코드를 발급하고, 잃어버리면 재발급해 예전 코드를 무효로 만듭니다.
+    # 사원증 코드는 비밀번호와 같으므로 DB에는 해시만 저장합니다. (코드 자체는 발급할 때 한 번만 보여줌)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='badge')
-    code = models.CharField(max_length=32, unique=True)
+    code = models.CharField(max_length=64, unique=True)  # SHA-256 해시
     created_at = models.DateTimeField(auto_now=True)
 
+    @staticmethod
+    def digest(code):
+        return hashlib.sha256(code.encode()).hexdigest()
 
 
 class DailyClose(models.Model):

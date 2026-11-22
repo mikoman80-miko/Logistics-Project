@@ -4,6 +4,7 @@
 - 넣을 때는 정한 위치(없으면 상품의 기본 위치)에, 꺼낼 때는 정한 위치 → 기본 위치 → 많은 곳 순서로 뺍니다.
 - 위치에 없는 수량을 꺼내면 '위치 미지정' 재고에서 나간 것으로 봅니다.
 """
+
 from django.db.models import F, Sum
 
 from .models import ItemStock
@@ -22,7 +23,10 @@ def add(item, quantity, location=None):
 def remove(item, quantity, prefer=None):
     """quantity개를 위치에서 뺍니다. 뺀 [(위치, 수량)]을 돌려줍니다. 모자라는 만큼은 미지정 재고에서 나간 것입니다."""
     rows = list(ItemStock.objects.select_for_update().filter(item=item, quantity__gt=0).select_related('location'))
-    order = lambda row: (0 if prefer and row.location_id == prefer.id else 1 if row.location_id == item.location_id else 2, -row.quantity)
+
+    def order(row):
+        return (0 if prefer and row.location_id == prefer.id else 1 if row.location_id == item.location_id else 2, -row.quantity)
+
     taken, left = [], quantity
     for row in sorted(rows, key=order):
         if left <= 0:

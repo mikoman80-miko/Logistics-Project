@@ -144,6 +144,9 @@ myenv\Scripts\python mock_carrier\server.py
 
 ## 테스트와 백업
 
+메뉴를 눌러 볼 시연용 데이터는 `myenv\Scripts\python manage.py seed_demo`로 만듭니다. (개발 DB 전용, 먼저 `backup_db.py`로 백업)
+상품·위치·거래처·발주·주문·반품을 10건 안팎씩 실제 처리 흐름대로 만들고 지난 3주에 나눠 둡니다. 데모 계정은 manager01(관리자), worker01~05(현장작업자)이며 비밀번호는 `Demo-wms-2026!`입니다.
+
 ```powershell
 myenv\Scripts\python manage.py test inventory
 myenv\Scripts\python backup_db.py    # db_backups 폴더에 저장
@@ -174,6 +177,9 @@ myenv\Scripts\python restore_check.py    # 복원 리허설: 가장 최근 백�
 5. `npm run start`로 다시 실행합니다.
 
 ## 배포 전 확인
+
+- 보안: 화면에는 콘텐츠 보안 정책(CSP)이 걸려 이 서버의 스크립트만 실행됩니다. 사원증 코드는 DB에 해시로만 저장됩니다. 운영 서버는 요청 본문을 10MB까지만 받습니다.
+- `.env`로 바꿀 수 있는 값: `BACKUP_KEEP_DAYS`(백업 보관 일수, 기본 30, 0이면 지우지 않음), `DB_CONN_MAX_AGE`(DB 연결 재사용 초, 기본 60)
 
 - 운영 모드(`npm run prod:start`)로 실행합니다. 디버그는 자동으로 꺼집니다.
 - HTTPS를 쓰는 경우에만 `.env`에 `DJANGO_HTTPS=True`를 넣습니다. (사내망 HTTP에서 켜면 접속이 막힙니다)

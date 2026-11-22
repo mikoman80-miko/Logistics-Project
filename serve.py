@@ -5,6 +5,7 @@
 먼저 `npm run prod:build`로 화면을 빌드하고 정적 파일을 모아 두어야 합니다. 보통은 `npm run prod:start`로 pm2에서 실행합니다.
 환경 변수: WMS_HOST(기본 0.0.0.0), WMS_PORT(기본 8080), WMS_THREADS(동시 처리 수, 기본 8)
 """
+
 import os
 import socket
 import sys
@@ -31,6 +32,7 @@ def own_addresses():
 
 def main():
     from dotenv import load_dotenv
+
     load_dotenv(BASE_DIR / '.env')
     hosts = {h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h.strip()} | own_addresses()
     os.environ['DJANGO_ALLOWED_HOSTS'] = ','.join(sorted(hosts))
@@ -54,7 +56,8 @@ def main():
     threads = int(os.environ.get('WMS_THREADS', '8'))
     lan = sorted(h for h in hosts if h[0].isdigit() and h != '127.0.0.1')
     print(f'WMS 운영 서버 시작: http://127.0.0.1:{port}' + ''.join(f' / http://{ip}:{port}' for ip in lan), flush=True)
-    serve(application, host=host, port=port, threads=threads, ident='WMS')
+    # 요청 본문은 10MB까지만 받습니다. (기본 1GB) 엑셀로 올리는 배송지 목록도 이 안에 들어옵니다.
+    serve(application, host=host, port=port, threads=threads, ident='WMS', max_request_body_size=10 * 1024 * 1024)
 
 
 if __name__ == '__main__':

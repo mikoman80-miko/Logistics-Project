@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.csp import CSP
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -68,6 +69,8 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     # 운영 모드에서 정적 파일과 빌드한 화면 파일을 내려줍니다.
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    # API 응답(JSON)을 압축해 보냅니다. 로그인은 쿠키가 아닌 토큰 헤더를 써서 압축으로 인한 정보 노출(BREACH) 대상이 아닙니다.
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -75,7 +78,23 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django.middleware.csp.ContentSecurityPolicyMiddleware',
 ]
+
+# 콘텐츠 보안 정책(CSP): 화면은 이 서버의 스크립트·스타일만 쓰므로, 다른 곳의 코드가 끼어들지 못하게 막습니다.
+# (로그인 토큰을 브라우저에 보관하므로 스크립트 주입을 막는 것이 중요합니다)
+SECURE_CSP = {
+    'default-src': [CSP.SELF],
+    'script-src': [CSP.SELF],
+    'style-src': [CSP.SELF, CSP.UNSAFE_INLINE],  # 화면에서 계산해 넣는 style 속성 (막대 폭 등)
+    'img-src': [CSP.SELF, 'data:', 'blob:'],
+    'font-src': [CSP.SELF, 'data:'],
+    'connect-src': [CSP.SELF],
+    'object-src': [CSP.NONE],
+    'base-uri': [CSP.SELF],
+    'form-action': [CSP.SELF],
+    'frame-ancestors': [CSP.NONE],
+}
 
 ROOT_URLCONF = 'config.urls'
 
@@ -110,6 +129,9 @@ DATABASES = {
         'PORT': os.environ.get('DB_PORT', '3306'),
         # 요청 하나를 하나의 트랜잭션으로 처리해, 오류 시 재고가 일부만 바뀌지 않게 합니다.
         'ATOMIC_REQUESTS': True,
+        # DB 연결을 요청마다 새로 맺지 않고 잠시 재사용합니다. 끊긴 연결은 쓰기 전에 확인해 다시 맺습니다.
+        'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '60')),
+        'CONN_HEALTH_CHECKS': True,
         'TEST': {'NAME': 'test_wms_db'},
     }
 }
@@ -155,8 +177,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # 운영 모드: 빌드한 화면(npm run build 결과)을 Django가 함께 제공합니다. 개발 중에는 Vite(5173)를 씁니다.
 FRONTEND_DIST = BASE_DIR / 'wms-frontend' / 'dist'
 WHITENOISE_ROOT = FRONTEND_DIST if FRONTEND_DIST.exists() else None
+
+
 # 빌드한 파일 이름에는 내용 해시가 붙어 있어 오래 캐시해도 됩니다.
-WHITENOISE_IMMUTABLE_FILE_TEST = lambda path, url: url.startswith('/assets/')
+def WHITENOISE_IMMUTABLE_FILE_TEST(path, url):  # Django 설정이라 이름이 대문자
+    return url.startswith('/assets/')
 
 
 # Email
@@ -173,16 +198,10 @@ if DEBUG:
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': ('rest_framework_simplejwt.authentication.JWTAuthentication',),
     # 권한을 지정하지 않은 API도 로그인 없이는 접근할 수 없습니다.
-    'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated',
-    ),
-    'DEFAULT_RENDERER_CLASSES': (
-        'rest_framework.renderers.JSONRenderer',
-    ),
+    'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
+    'DEFAULT_RENDERER_CLASSES': ('rest_framework.renderers.JSONRenderer',),
     # 로그인 시도 횟수 제한(비밀번호 무차별 대입 방지)
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/minute',
@@ -206,11 +225,15 @@ LOGGING = {
     'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
     'handlers': {
         'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
-        **({} if TESTING else {
-            'file': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}.log'), 'backupCount': 30, 'level': 'INFO'},
-            'errors': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}-error.log'), 'backupCount': 90, 'level': 'ERROR'},
-            'alert': {'class': 'inventory.monitor.AlertLogHandler', 'level': 'ERROR'},
-        }),
+        **(
+            {}
+            if TESTING
+            else {
+                'file': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}.log'), 'backupCount': 30, 'level': 'INFO'},
+                'errors': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}-error.log'), 'backupCount': 90, 'level': 'ERROR'},
+                'alert': {'class': 'inventory.monitor.AlertLogHandler', 'level': 'ERROR'},
+            }
+        ),
     },
     'root': {'handlers': ['console'] if TESTING else ['console', 'file', 'errors', 'alert'], 'level': 'INFO'},
     'loggers': {

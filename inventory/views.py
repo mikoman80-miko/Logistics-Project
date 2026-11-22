@@ -8,7 +8,7 @@ from datetime import datetime, time, timedelta
 from time import sleep
 from io import StringIO
 
-import requests # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
+import requests  # 🌟 NEW: 슬랙/디스코드 웹훅 알림용 모듈
 from django.conf import settings
 from django.contrib.auth.models import User, update_last_login
 from django.contrib.auth.password_validation import validate_password
@@ -33,8 +33,42 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from . import audit, carrier, due, monitor, stock
 from .audit import AuditMixin
 from .carrier import CarrierError
-from .models import AppNotification, DailyClose, MasterChange, NotificationSeen, ReceiptIssue, WorkerBadge, Item, ItemSerial, ItemStock, InventoryLog, WarehouseLocation, Category, Supplier, PurchaseOrder, PurchaseOrderItem, SalesOrder, SalesOrderItem, SalesOrderSerial, ReturnOrder, CarrierEvent
-from .serializers import next_document_number, user_display, UserSerializer, ItemSerializer, ItemSerialSerializer, InventoryLogSerializer, WarehouseLocationSerializer, CategorySerializer, SupplierSerializer, PurchaseOrderSerializer, SalesOrderSerializer, ReturnOrderSerializer
+from .models import (
+    AppNotification,
+    DailyClose,
+    MasterChange,
+    NotificationSeen,
+    ReceiptIssue,
+    WorkerBadge,
+    Item,
+    ItemSerial,
+    ItemStock,
+    InventoryLog,
+    WarehouseLocation,
+    Category,
+    Supplier,
+    PurchaseOrder,
+    PurchaseOrderItem,
+    SalesOrder,
+    SalesOrderItem,
+    SalesOrderSerial,
+    ReturnOrder,
+    CarrierEvent,
+)
+from .serializers import (
+    next_document_number,
+    user_display,
+    UserSerializer,
+    ItemSerializer,
+    ItemSerialSerializer,
+    InventoryLogSerializer,
+    WarehouseLocationSerializer,
+    CategorySerializer,
+    SupplierSerializer,
+    PurchaseOrderSerializer,
+    SalesOrderSerializer,
+    ReturnOrderSerializer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +89,7 @@ def send_webhook_alert(message, kind='알림', link=''):
 
     def post():
         try:
-            requests.post(settings.ALERT_WEBHOOK_URL, json={"text": f"🚨 [WMS 긴급 알림] {message}"}, timeout=2)
+            requests.post(settings.ALERT_WEBHOOK_URL, json={'text': f'🚨 [WMS 긴급 알림] {message}'}, timeout=2)
         except requests.RequestException:
             logger.exception('Webhook 전송 실패')
 
@@ -73,9 +107,16 @@ def save_carrier_event(record, event):
     if not event.get('event_id') or not event.get('status') or not occurred_at:
         return False
     owner = {'sales_order': record} if isinstance(record, SalesOrder) else {'return_order': record}
-    _, created = CarrierEvent.objects.get_or_create(event_id=str(event['event_id'])[:64], defaults={
-        **owner, 'waybill_no': record.waybill_no, 'status': str(event['status'])[:20],
-        'location': str(event.get('location') or '')[:100], 'occurred_at': occurred_at})
+    _, created = CarrierEvent.objects.get_or_create(
+        event_id=str(event['event_id'])[:64],
+        defaults={
+            **owner,
+            'waybill_no': record.waybill_no,
+            'status': str(event['status'])[:20],
+            'location': str(event.get('location') or '')[:100],
+            'occurred_at': occurred_at,
+        },
+    )
     return created
 
 
@@ -133,9 +174,14 @@ def split_backorder(order, user):
         return None, None  # 모두 스캔했으면 보통 출고와 같습니다.
 
     backorder = SalesOrder.objects.create(
-        order_no=next_document_number(SalesOrder, 'order_no', 'ORD'), customer=order.customer, split_from=order, created_by=user, is_urgent=order.is_urgent,
+        order_no=next_document_number(SalesOrder, 'order_no', 'ORD'),
+        customer=order.customer,
+        split_from=order,
+        created_by=user,
+        is_urgent=order.is_urgent,
         note=f'{order.order_no}의 남은 수량' + (f' / {order.note}' if order.note else ''),
-        **{key: getattr(order, key) for key in SHIPPING_FIELDS})
+        **{key: getattr(order, key) for key in SHIPPING_FIELDS},
+    )
     SalesOrderItem.objects.bulk_create([SalesOrderItem(order=backorder, item_id=line.item_id, quantity=line.quantity - line.picked_quantity) for line in short])
     for line in short:
         if line.picked_quantity == 0:
@@ -163,6 +209,7 @@ def update_shipping_address(record, serializer_class, data):
 
 class PageOnRequest(PageNumberPagination):
     """page를 보낸 요청만 나눠서 돌려줍니다. ({count, results}) 현장 화면처럼 전체 목록(배열)을 쓰는 곳은 그대로 둡니다."""
+
     page_size = 50
     page_size_query_param = 'page_size'
     max_page_size = 200
@@ -196,9 +243,16 @@ def filter_documents(queryset, params, date_field, search_fields, date_only=Fals
 
 def address_key(record):
     # 묶음배송 비교용: 공백과 전화번호 구분 기호를 무시합니다.
-    clean = lambda value: ' '.join((value or '').split())
-    return (clean(record.contact_name), re.sub(r'\D', '', record.contact_phone or ''), clean(record.zipcode),
-            clean(record.address), clean(record.address_detail))
+    def clean(value):
+        return ' '.join((value or '').split())
+
+    return (
+        clean(record.contact_name),
+        re.sub(r'\D', '', record.contact_phone or ''),
+        clean(record.zipcode),
+        clean(record.address),
+        clean(record.address_detail),
+    )
 
 
 def update_order(order, changes, lines=None):
@@ -259,11 +313,15 @@ def alert_if_low_stock(item):
     """안전 재고 이하로 처음 내려갈 때 한 번만 알립니다. 다시 안전 재고 위로 채워지면(Item.save) 다음에 또 알립니다."""
     if item.quantity > item.safety_stock or item.low_stock_alerted:
         return
-    incoming = (PurchaseOrderItem.objects.filter(item=item, po__status__in=['발주대기', '입고중'])
-                .aggregate(n=Coalesce(Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity')), 0))['n'])
+    incoming = PurchaseOrderItem.objects.filter(item=item, po__status__in=['발주대기', '입고중']).aggregate(
+        n=Coalesce(Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity')), 0)
+    )['n']
     plan = f'입고 예정 {incoming}개' if incoming > 0 else '진행 중인 발주 없음 → 발주 관리의 [발주 제안]에서 발주하세요'
-    send_webhook_alert(f"[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}",
-                       kind='재고 부족', link='/purchase-order?suggest=1')
+    send_webhook_alert(
+        f'[재고 부족] {item.name}({item.sku}) 재고 {item.quantity}개 ≤ 안전 재고 {item.safety_stock}개 · {plan}',
+        kind='재고 부족',
+        link='/purchase-order?suggest=1',
+    )
     Item.objects.filter(pk=item.pk).update(low_stock_alerted=True)
     item.low_stock_alerted = True
 
@@ -370,17 +428,19 @@ class InventoryLedgerAPIView(APIView):
         ledger_data = []
         for item in items:
             outbound_qty = abs(item.outbound_qty)
-            ledger_data.append({
-                'sku': item.sku,
-                'name': item.name,
-                'category_name': item.category.name if item.category else '미분류',
-                'location': item.location.full_code if item.location else '미지정',
-                'opening_qty': item.opening_qty,
-                'inbound_qty': item.inbound_qty,
-                'outbound_qty': outbound_qty,
-                'closing_qty': item.opening_qty + item.inbound_qty - outbound_qty,
-                'current_qty': item.quantity
-            })
+            ledger_data.append(
+                {
+                    'sku': item.sku,
+                    'name': item.name,
+                    'category_name': item.category.name if item.category else '미분류',
+                    'location': item.location.full_code if item.location else '미지정',
+                    'opening_qty': item.opening_qty,
+                    'inbound_qty': item.inbound_qty,
+                    'outbound_qty': outbound_qty,
+                    'closing_qty': item.opening_qty + item.inbound_qty - outbound_qty,
+                    'current_qty': item.quantity,
+                }
+            )
 
         return Response(ledger_data, status=status.HTTP_200_OK)
 
@@ -392,8 +452,12 @@ class CategoryViewSet(AuditMixin, viewsets.ModelViewSet):
 
 
 class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
-    queryset = Item.objects.select_related('category', 'location').prefetch_related('stocks__location').filter(is_active=True).annotate(
-        in_stock_serials=Count('serials', filter=Q(serials__status=IN_STOCK)))
+    queryset = (
+        Item.objects.select_related('category', 'location')
+        .prefetch_related('stocks__location')
+        .filter(is_active=True)
+        .annotate(in_stock_serials=Count('serials', filter=Q(serials__status=IN_STOCK)))
+    )
     serializer_class = ItemSerializer
     permission_classes = [IsAdminRole]
 
@@ -401,9 +465,11 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def analyze_abc(self, request):
         thirty_days_ago = timezone.now() - timedelta(days=30)
-        items = list(Item.objects.filter(is_active=True).annotate(
-            usage=Coalesce(Sum('logs__quantity_changed', filter=Q(logs__action='OUT', logs__timestamp__gte=thirty_days_ago)), 0)
-        ))
+        items = list(
+            Item.objects.filter(is_active=True).annotate(
+                usage=Coalesce(Sum('logs__quantity_changed', filter=Q(logs__action='OUT', logs__timestamp__gte=thirty_days_ago)), 0)
+            )
+        )
         for item in items:
             item.usage = abs(item.usage)
         total_outbound = sum(item.usage for item in items)
@@ -419,11 +485,11 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
             cumulative += item.usage
             percent = cumulative / total_outbound
             if percent <= 0.7:
-                item.abc_grade = 'A' # 상위 70% 매출 점유
+                item.abc_grade = 'A'  # 상위 70% 매출 점유
             elif percent <= 0.9:
-                item.abc_grade = 'B' # 중위 20%
+                item.abc_grade = 'B'  # 중위 20%
             else:
-                item.abc_grade = 'C' # 하위 10% (장기 체화 의심)
+                item.abc_grade = 'C'  # 하위 10% (장기 체화 의심)
         Item.objects.bulk_update(items, ['abc_grade'])
 
         return Response({'message': 'ABC 재고 분석 및 등급 갱신이 완료되었습니다.'}, status=status.HTTP_200_OK)
@@ -464,11 +530,20 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
         item_ids = set(Item.objects.filter(here, is_active=True).values_list('id', flat=True)) | set(counted)
         rows = []
         for item in Item.objects.select_for_update().filter(pk__in=item_ids).select_related('location').order_by('sku'):
-            row = {'item': item.id, 'sku': item.sku, 'name': item.name, 'serial_tracked': item.serial_tracked,
-                   'system': stock.at(item, location), 'counted': counted[item.id], 'missing': [], 'unexpected': [], 'moved': [],
-                   'location_name': item.location.full_code if item.location else '',
-                   # 이 위치에 기록이 없던 수량 상품: 반영하면 이 위치 재고로 더해집니다.
-                   'new_here': not item.serial_tracked and item.location_id != location.id and not stock.at(item, location)}
+            row = {
+                'item': item.id,
+                'sku': item.sku,
+                'name': item.name,
+                'serial_tracked': item.serial_tracked,
+                'system': stock.at(item, location),
+                'counted': counted[item.id],
+                'missing': [],
+                'unexpected': [],
+                'moved': [],
+                'location_name': item.location.full_code if item.location else '',
+                # 이 위치에 기록이 없던 수량 상품: 반영하면 이 위치 재고로 더해집니다.
+                'new_here': not item.serial_tracked and item.location_id != location.id and not stock.at(item, location),
+            }
             if item.serial_tracked:
                 in_stock = list(item.serials.filter(status=IN_STOCK).select_related('location').order_by('serial_number'))
                 here_serials = [s for s in in_stock if s.location_id == location.id]
@@ -476,8 +551,11 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
                 row['system'] = len(here_serials)
                 row['missing'] = [s.serial_number for s in here_serials if s.serial_number not in scanned]
                 row['unexpected'] = [f'{no} ({s.status})' for no, s in scanned.items() if s.status != IN_STOCK]
-                row['moved'] = [f'{no} ({s.location.full_code if s.location else "위치 미지정"})' for no, s in scanned.items()
-                                if s.status == IN_STOCK and s.location_id != location.id]
+                row['moved'] = [
+                    f'{no} ({s.location.full_code if s.location else "위치 미지정"})'
+                    for no, s in scanned.items()
+                    if s.status == IN_STOCK and s.location_id != location.id
+                ]
             rows.append(row)
 
         applied = []
@@ -494,7 +572,9 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
                         item.quantity = max(0, item.quantity + diff)
                         item.save(update_fields=['quantity'])
                         if diff:
-                            InventoryLog.objects.create(item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user, work='조정')
+                            InventoryLog.objects.create(
+                                item=item, action='IN' if diff > 0 else 'OUT', quantity_changed=diff, description=note, user=request.user, work='조정'
+                            )
                         if diff < 0:
                             alert_if_low_stock(item)
                         applied.append(f'[{item.sku}] 이 위치 {located:+d}' + (f', 총재고 {diff:+d}' if diff != located else ''))
@@ -515,8 +595,16 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
         matched = not unknown and all(row['counted'] == row['system'] and not row['missing'] and not row['unexpected'] for row in rows)
         if apply or (matched and codes):
             WarehouseLocation.objects.filter(pk=location.pk).update(last_counted_at=timezone.now())
-        return Response({'location': location.full_code, 'rows': rows, 'unknown': unknown, 'warnings': warnings, 'applied': applied,
-                         'counted': bool(apply or (matched and codes))})
+        return Response(
+            {
+                'location': location.full_code,
+                'rows': rows,
+                'unknown': unknown,
+                'warnings': warnings,
+                'applied': applied,
+                'counted': bool(apply or (matched and codes)),
+            }
+        )
 
     @action(detail=True, methods=['post'])
     def transfer_location(self, request, pk=None):
@@ -539,7 +627,14 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
         item.save(update_fields=['location'])
         audit.record(request.user, item, '수정', before)
         old_location_str = old_location.full_code if old_location else '미지정'
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, description=f"보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개", user=request.user, work='이동')
+        InventoryLog.objects.create(
+            item=item,
+            action='TRANSFER',
+            quantity_changed=0,
+            description=f'보관 위치 이동: [{old_location_str}] ➔ [{new_location.full_code}] {moved}개',
+            user=request.user,
+            work='이동',
+        )
         return Response({'message': '보관 위치 이동 완료', 'location': new_location.full_code})
 
     @action(detail=True, methods=['post'])
@@ -590,8 +685,15 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
             return error_response(error)
         ItemSerial.objects.filter(id__in=[s.id for s in serials]).update(location=target)
         where = source.full_code if source else '미지정'
-        InventoryLog.objects.create(item=item, action='TRANSFER', quantity_changed=0, user=request.user, work='이동',
-                                    description=f'{label}: [{where}] ➔ [{target.full_code}] {quantity}개' + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''))
+        InventoryLog.objects.create(
+            item=item,
+            action='TRANSFER',
+            quantity_changed=0,
+            user=request.user,
+            work='이동',
+            description=f'{label}: [{where}] ➔ [{target.full_code}] {quantity}개'
+            + (f' ({", ".join(s.serial_number for s in serials)})'[:120] if serials else ''),
+        )
         return Response({'message': f'[{item.sku}] {quantity}개를 {target.full_code}로 옮겼습니다.', 'item': self.get_serializer(item).data})
 
     def create(self, request, *args, **kwargs):
@@ -613,7 +715,10 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
         item = Item.objects.select_for_update().get(pk=instance.pk)
         if item.quantity > 0:
             raise ValidationError({'error': f'재고가 {item.quantity}개 남아 있어 삭제할 수 없습니다. 재고를 0으로 만든 뒤 삭제해 주세요.'})
-        if SalesOrderItem.objects.filter(item=item, order__status='출고대기').exists() or item.purchaseorderitem_set.filter(po__status__in=['발주대기', '입고중']).exists():
+        if (
+            SalesOrderItem.objects.filter(item=item, order__status='출고대기').exists()
+            or item.purchaseorderitem_set.filter(po__status__in=['발주대기', '입고중']).exists()
+        ):
             raise ValidationError({'error': '진행 중인 주문 또는 발주서에 포함된 상품은 삭제할 수 없습니다.'})
         item.is_active = False
         item.save(update_fields=['is_active'])
@@ -641,7 +746,11 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
             # 창고에 있다고 기록된 시리얼보다 수량이 적어지면 둘이 어긋나므로 막습니다.
             in_stock = old.serials.filter(status=IN_STOCK).count()
             if new_quantity < in_stock:
-                raise ValidationError({'error': f'[{old.sku}] 재고보유 시리얼이 {in_stock}개라 수량을 {in_stock}개 미만으로 줄일 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.'})
+                raise ValidationError(
+                    {
+                        'error': f'[{old.sku}] 재고보유 시리얼이 {in_stock}개라 수량을 {in_stock}개 미만으로 줄일 수 없습니다. 없어진 기기는 시리얼 조회에서 상태를 바꿔 주세요.'
+                    }
+                )
         item = serializer.save()
         quantity_diff = item.quantity - old_quantity
         if quantity_diff > 0:
@@ -651,11 +760,13 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
 
         if quantity_diff != 0:
             action_type = 'IN' if quantity_diff > 0 else 'OUT'
-            description = ""
-            if 'physicalQty' in self.request.data: # 실사 조정일 경우
-                description = "월말 재고 실사 조정"
-                send_webhook_alert(f"재고 오차 조정 발생: {item.name} ({quantity_diff}개)", kind='재고 조정', link='/ledger')
-            InventoryLog.objects.create(item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user, work='조정')
+            description = ''
+            if 'physicalQty' in self.request.data:  # 실사 조정일 경우
+                description = '월말 재고 실사 조정'
+                send_webhook_alert(f'재고 오차 조정 발생: {item.name} ({quantity_diff}개)', kind='재고 조정', link='/ledger')
+            InventoryLog.objects.create(
+                item=item, action=action_type, quantity_changed=quantity_diff, description=description, user=self.request.user, work='조정'
+            )
 
             # 🌟 NEW: 안전 재고 이하로 떨어졌을 때 웹훅 알림 발송
             if quantity_diff < 0:
@@ -709,7 +820,9 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
             item.quantity += 1
             item.save(update_fields=['quantity'])
             stock.add(item, 1)
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user, work='조정')
+            InventoryLog.objects.create(
+                item=item, action='IN', quantity_changed=1, description=f'시리얼 직접 입고 S/N {serial_number}', user=request.user, work='조정'
+            )
             return Response({'message': f'S/N [{serial_number}] 입고 완료'})
 
         serial_obj = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item, status=IN_STOCK).first()
@@ -720,7 +833,9 @@ class ItemViewSet(AuditMixin, viewsets.ModelViewSet):
         serial_obj.save()
         item.quantity -= 1
         item.save(update_fields=['quantity'])
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-1, description=f'시리얼 직접 출고 S/N {serial_number}', user=request.user, work='조정')
+        InventoryLog.objects.create(
+            item=item, action='OUT', quantity_changed=-1, description=f'시리얼 직접 출고 S/N {serial_number}', user=request.user, work='조정'
+        )
 
         # 🌟 NEW: 출고 후 안전 재고 체크
         alert_if_low_stock(item)
@@ -783,7 +898,11 @@ class SupplierViewSet(AuditMixin, viewsets.ModelViewSet):
 
 # 🌟 NEW: 발주서(PO) API 및 검수 입고 로직
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
-    queryset = PurchaseOrder.objects.select_related('supplier').prefetch_related('items__item__location', 'items__received_serials', 'items__issues__user').order_by('-order_date', '-id')
+    queryset = (
+        PurchaseOrder.objects.select_related('supplier')
+        .prefetch_related('items__item__location', 'items__received_serials', 'items__issues__user')
+        .order_by('-order_date', '-id')
+    )
     serializer_class = PurchaseOrderSerializer
     permission_classes = [IsAdminRole]
     pagination_class = PageOnRequest
@@ -791,8 +910,13 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        return filter_documents(super().get_queryset(), self.request.query_params, 'order_date',
-                                ['po_number', 'supplier__name', 'items__item__sku', 'items__item__name'], date_only=True)
+        return filter_documents(
+            super().get_queryset(),
+            self.request.query_params,
+            'order_date',
+            ['po_number', 'supplier__name', 'items__item__sku', 'items__item__name'],
+            date_only=True,
+        )
 
     @action(detail=False, methods=['get'], permission_classes=[IsAdminUser])
     def suggestions(self, request):
@@ -803,11 +927,19 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         items = Item.objects.filter(is_active=True).annotate(
             usage=Coalesce(Sum('logs__quantity_changed', filter=Q(logs__action='OUT', logs__timestamp__gte=since)), 0),
         )
-        incoming = dict(PurchaseOrderItem.objects.filter(po__status__in=['발주대기', '입고중'])
-                        .values('item').annotate(total=Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity'))).values_list('item', 'total'))
+        incoming = dict(
+            PurchaseOrderItem.objects.filter(po__status__in=['발주대기', '입고중'])
+            .values('item')
+            .annotate(total=Sum(F('order_quantity') - F('received_quantity') - F('closed_quantity')))
+            .values_list('item', 'total')
+        )
         last_supplier = {}
-        for line in (PurchaseOrderItem.objects.filter(po__supplier__is_active=True).exclude(po__status='취소됨')
-                     .select_related('po__supplier').order_by('item_id', '-po__order_date', '-po_id')):
+        for line in (
+            PurchaseOrderItem.objects.filter(po__supplier__is_active=True)
+            .exclude(po__status='취소됨')
+            .select_related('po__supplier')
+            .order_by('item_id', '-po__order_date', '-po_id')
+        ):
             last_supplier.setdefault(line.item_id, line.po.supplier)
 
         rows = []
@@ -819,11 +951,20 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             if suggested <= 0:
                 continue
             supplier = last_supplier.get(item.id)
-            rows.append({
-                'item': item.id, 'sku': item.sku, 'name': item.name, 'quantity': item.quantity,
-                'safety_stock': item.safety_stock, 'incoming': coming, 'usage_30d': usage, 'suggested': suggested,
-                'supplier': supplier.id if supplier else None, 'supplier_name': supplier.name if supplier else '',
-            })
+            rows.append(
+                {
+                    'item': item.id,
+                    'sku': item.sku,
+                    'name': item.name,
+                    'quantity': item.quantity,
+                    'safety_stock': item.safety_stock,
+                    'incoming': coming,
+                    'usage_30d': usage,
+                    'suggested': suggested,
+                    'supplier': supplier.id if supplier else None,
+                    'supplier_name': supplier.name if supplier else '',
+                }
+            )
         rows.sort(key=lambda row: (row['supplier_name'] or '힣', row['quantity'] - row['safety_stock']))
         return Response({'lead_days': lead_days, 'rows': rows})
 
@@ -886,8 +1027,10 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         master_item.quantity += receive_qty
         master_item.save(update_fields=['quantity'])
         stock.add(master_item, receive_qty, target)
-        description = f"발주번호 {po.po_number} 정상 입고" + (f" S/N {serial_number}" if serial_number else '') + (f" → {target.full_code}" if target else '')
-        InventoryLog.objects.create(item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user, work='입고', reference=po.po_number)
+        description = f'발주번호 {po.po_number} 정상 입고' + (f' S/N {serial_number}' if serial_number else '') + (f' → {target.full_code}' if target else '')
+        InventoryLog.objects.create(
+            item=master_item, action='IN', quantity_changed=receive_qty, description=description[:200], user=request.user, work='입고', reference=po.po_number
+        )
 
         refresh_po_status(po)
 
@@ -921,8 +1064,13 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                 return error_response('시리얼 관리 상품은 1개씩 취소해주세요.')
             serial = ItemSerial.objects.select_for_update().filter(serial_number=serial_number, item=item).first()
             # 이 기능 이전에 입고된 시리얼은 발주 연결이 없어 입고 기록으로 확인합니다.
-            from_this_po = serial and (serial.po_item_id == po_item.id or (
-                serial.po_item_id is None and InventoryLog.objects.filter(item=item, description=f'발주번호 {po.po_number} 정상 입고 S/N {serial_number}').exists()))
+            from_this_po = serial and (
+                serial.po_item_id == po_item.id
+                or (
+                    serial.po_item_id is None
+                    and InventoryLog.objects.filter(item=item, description=f'발주번호 {po.po_number} 정상 입고 S/N {serial_number}').exists()
+                )
+            )
             if not from_this_po:
                 return error_response(f'[{serial_number}] 이 발주서로 입고된 시리얼이 아닙니다.')
             if serial.status != IN_STOCK:
@@ -943,7 +1091,9 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         item.quantity -= cancel_qty
         item.save(update_fields=['quantity'])
         description = f'발주번호 {po.po_number} 입고 취소' + (f' S/N {serial_number}' if serial else '')
-        InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user, work='입고취소', reference=po.po_number)
+        InventoryLog.objects.create(
+            item=item, action='OUT', quantity_changed=-cancel_qty, description=description[:200], user=request.user, work='입고취소', reference=po.po_number
+        )
         alert_if_low_stock(item)
 
         refresh_po_status(po)
@@ -977,8 +1127,13 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             po_item.save(update_fields=['closed_quantity'])
             refresh_po_status(po)
         fresh = self.get_queryset().get(pk=po.pk)
-        return Response({'message': f'[{po_item.item.name}] {kind} {quantity}개 기록' + ('' if kind == '초과' else ' (그만큼 더 받지 않음)'),
-                         'status': fresh.status, 'po': self.get_serializer(fresh).data})
+        return Response(
+            {
+                'message': f'[{po_item.item.name}] {kind} {quantity}개 기록' + ('' if kind == '초과' else ' (그만큼 더 받지 않음)'),
+                'status': fresh.status,
+                'po': self.get_serializer(fresh).data,
+            }
+        )
 
     @action(detail=True, methods=['post'])
     def cancel_issue(self, request, pk=None):
@@ -1010,17 +1165,31 @@ def refresh_po_status(po):
 
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
-    queryset = SalesOrder.objects.select_related('bundle_parent').prefetch_related(
-        'items__item__location', 'items__item__stocks__location', 'items__picked_serials__serial', 'carrier_events', 'bundle_members', 'bundle_parent__bundle_members', 'bundle_parent__carrier_events'
-    ).order_by('-created_at', '-id')
+    queryset = (
+        SalesOrder.objects.select_related('bundle_parent')
+        .prefetch_related(
+            'items__item__location',
+            'items__item__stocks__location',
+            'items__picked_serials__serial',
+            'carrier_events',
+            'bundle_members',
+            'bundle_parent__bundle_members',
+            'bundle_parent__carrier_events',
+        )
+        .order_by('-created_at', '-id')
+    )
     serializer_class = SalesOrderSerializer
     permission_classes = [IsAdminRole]
     pagination_class = PageOnRequest
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        queryset = filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
-                                    ['order_no', 'customer', 'contact_name', 'waybill_no', 'items__item__sku', 'items__item__name'])
+        queryset = filter_documents(
+            super().get_queryset(),
+            self.request.query_params,
+            'created_at',
+            ['order_no', 'customer', 'contact_name', 'waybill_no', 'items__item__sku', 'items__item__name'],
+        )
         if self.request.query_params.get('item'):  # 이 상품이 들어 있는 주문 (반품 등록에서 원래 주문 고르기)
             queryset = queryset.filter(items__item_id=to_int(self.request.query_params['item'])).distinct()
         return queryset
@@ -1062,7 +1231,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         master = order.bundle_parent or order
         SalesOrder.objects.filter(Q(pk=master.pk) | Q(bundle_parent=master)).update(is_urgent=value)
         order.refresh_from_db()
-        return self._order_response(order, f"주문 {order.order_no} 긴급 {'지정' if value else '해제'}")
+        return self._order_response(order, f'주문 {order.order_no} 긴급 {"지정" if value else "해제"}')
 
     @action(detail=False, methods=['post'])
     def import_addresses(self, request):
@@ -1338,7 +1507,15 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 stock.remove(item, 1, prefer=serial.location)
             stock.remove(item, line.quantity - len(picked))
             ItemSerial.objects.filter(id__in=[s.id for s in picked]).update(status='출고완료', location=None, updated_at=timezone.now())
-            InventoryLog.objects.create(item=item, action='OUT', quantity_changed=-line.quantity, description=f'주문번호 {order.order_no} 출고', user=request.user, work='출고', reference=order.order_no)
+            InventoryLog.objects.create(
+                item=item,
+                action='OUT',
+                quantity_changed=-line.quantity,
+                description=f'주문번호 {order.order_no} 출고',
+                user=request.user,
+                work='출고',
+                reference=order.order_no,
+            )
             alert_if_low_stock(item)
 
         order.status = '출고완료'
@@ -1362,6 +1539,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
                 message += '. 묶음배송의 나머지 주문을 모두 출고하면 집하를 요청합니다.'
         return Response({'message': message, 'status': order.status, 'waybill_no': order.waybill_no})
 
+
 class ReturnOrderViewSet(viewsets.ModelViewSet):
     queryset = ReturnOrder.objects.select_related('serial', 'item', 'sales_order').prefetch_related('carrier_events').order_by('-created_at', '-id')
     serializer_class = ReturnOrderSerializer
@@ -1370,8 +1548,12 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        return filter_documents(super().get_queryset(), self.request.query_params, 'created_at',
-                                ['return_no', 'customer', 'contact_name', 'waybill_no', 'serial__serial_number', 'item__sku', 'item__name'])
+        return filter_documents(
+            super().get_queryset(),
+            self.request.query_params,
+            'created_at',
+            ['return_no', 'customer', 'contact_name', 'waybill_no', 'serial__serial_number', 'item__sku', 'item__name'],
+        )
 
     def perform_create(self, serializer):
         return_order = serializer.save(created_by=self.request.user)
@@ -1446,8 +1628,15 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
         if error:
             return error_response(error)
         if new_status != IN_STOCK:  # 재고로 돌아오지 않는 회수(AS·폐기)도 실적에 남도록 기록합니다.
-            InventoryLog.objects.create(item=serial.item, action='RETURN', quantity_changed=0, description=f'{description} → {new_status}'[:200],
-                                        user=request.user, work='반품', reference=return_order.return_no)
+            InventoryLog.objects.create(
+                item=serial.item,
+                action='RETURN',
+                quantity_changed=0,
+                description=f'{description} → {new_status}'[:200],
+                user=request.user,
+                work='반품',
+                reference=return_order.return_no,
+            )
 
         return_order.status, return_order.result = '회수완료', label
         return_order.completed_at = timezone.now()
@@ -1464,11 +1653,25 @@ class ReturnOrderViewSet(viewsets.ModelViewSet):
             item.quantity += return_order.quantity
             item.save(update_fields=['quantity'])
             stock.add(item, return_order.quantity)
-            InventoryLog.objects.create(item=item, action='IN', quantity_changed=return_order.quantity, description=description[:200], user=request.user,
-                                        work='반품', reference=return_order.return_no)
+            InventoryLog.objects.create(
+                item=item,
+                action='IN',
+                quantity_changed=return_order.quantity,
+                description=description[:200],
+                user=request.user,
+                work='반품',
+                reference=return_order.return_no,
+            )
         else:  # 폐기해도 회수 작업은 한 것이므로 수량 0으로 기록합니다.
-            InventoryLog.objects.create(item=item, action='RETURN', quantity_changed=0, description=f'{description} → 폐기'[:200], user=request.user,
-                                        work='반품', reference=return_order.return_no)
+            InventoryLog.objects.create(
+                item=item,
+                action='RETURN',
+                quantity_changed=0,
+                description=f'{description} → 폐기'[:200],
+                user=request.user,
+                work='반품',
+                reference=return_order.return_no,
+            )
         return_order.status, return_order.result = '회수완료', label or ('재고로 되돌림' if result == 'restock' else '폐기')
         return_order.completed_at = timezone.now()
         return_order.save(update_fields=['status', 'result', 'completed_at'])
@@ -1483,6 +1686,7 @@ class LogPagination(PageNumberPagination):
 
 class MasterChangeViewSet(viewsets.ReadOnlyModelViewSet):
     """기준정보 변경 이력. ?target=상품&q=검색어&start_date&end_date&object_id="""
+
     queryset = MasterChange.objects.select_related('user')
     permission_classes = [IsAdminUser]
     pagination_class = LogPagination
@@ -1505,8 +1709,19 @@ class MasterChangeViewSet(viewsets.ReadOnlyModelViewSet):
 
     def list(self, request, *args, **kwargs):
         page = self.paginate_queryset(self.get_queryset())
-        rows = [{'id': c.id, 'timestamp': timezone.localtime(c.timestamp).isoformat(), 'target': c.target, 'object_id': c.object_id,
-                 'label': c.label, 'action': c.action, 'changes': c.changes, 'user': user_display(c.user) if c.user else ''} for c in page]
+        rows = [
+            {
+                'id': c.id,
+                'timestamp': timezone.localtime(c.timestamp).isoformat(),
+                'target': c.target,
+                'object_id': c.object_id,
+                'label': c.label,
+                'action': c.action,
+                'changes': c.changes,
+                'user': user_display(c.user) if c.user else '',
+            }
+            for c in page
+        ]
         return self.get_paginated_response(rows)
 
 
@@ -1555,15 +1770,17 @@ class InventoryLogViewSet(viewsets.ReadOnlyModelViewSet):
             yield '\ufeff'
             yield writer.writerow(['발생일시', '구분', 'SKU', '상품명', '변동수량', '처리자', '비고'])
             for log in self.get_queryset().iterator(chunk_size=1000):
-                yield writer.writerow([
-                    timezone.localtime(log.timestamp).strftime('%Y-%m-%d %H:%M:%S'),
-                    action_names.get(log.action, log.action),
-                    csv_safe(log.item.sku),
-                    csv_safe(log.item.name),
-                    log.quantity_changed,
-                    csv_safe(user_display(log.user)),
-                    csv_safe(log.description),
-                ])
+                yield writer.writerow(
+                    [
+                        timezone.localtime(log.timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                        action_names.get(log.action, log.action),
+                        csv_safe(log.item.sku),
+                        csv_safe(log.item.name),
+                        log.quantity_changed,
+                        csv_safe(user_display(log.user)),
+                        csv_safe(log.description),
+                    ]
+                )
 
         response = StreamingHttpResponse(rows(), content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="inventory_logs.csv"'
@@ -1603,17 +1820,35 @@ class ItemSerialViewSet(viewsets.ModelViewSet):
         events = []
 
         def add(when, kind, title, detail='', user=None, waybill='', carrier_status=''):
-            events.append({'time': when, 'kind': kind, 'title': title, 'detail': detail, 'user': user_display(user),
-                           'waybill_no': waybill, 'carrier_status': carrier_status, 'tracking_url': carrier.tracking_url(waybill)})
+            events.append(
+                {
+                    'time': when,
+                    'kind': kind,
+                    'title': title,
+                    'detail': detail,
+                    'user': user_display(user),
+                    'waybill_no': waybill,
+                    'carrier_status': carrier_status,
+                    'tracking_url': carrier.tracking_url(waybill),
+                }
+            )
 
-        logs = [log for log in InventoryLog.objects.filter(item=serial.item, description__contains=sn).select_related('user')
-                if mentions.search(log.description or '') and not log.description.startswith('반품 ')]
+        logs = [
+            log
+            for log in InventoryLog.objects.filter(item=serial.item, description__contains=sn).select_related('user')
+            if mentions.search(log.description or '') and not log.description.startswith('반품 ')
+        ]
         if not any(log.action == 'IN' for log in logs):
             source = f'발주 {serial.po_item.po.po_number}' if serial.po_item_id else ''
             add(serial.created_at, 'in', '시리얼 등록', source)
         for log in logs:
-            add(log.timestamp, 'in' if log.quantity_changed > 0 else 'out' if log.quantity_changed < 0 else 'etc',
-                InventoryLogSerializer.ACTION_NAMES.get(log.action, log.action), log.description, log.user)
+            add(
+                log.timestamp,
+                'in' if log.quantity_changed > 0 else 'out' if log.quantity_changed < 0 else 'etc',
+                InventoryLogSerializer.ACTION_NAMES.get(log.action, log.action),
+                log.description,
+                log.user,
+            )
 
         for pick in serial.order_picks.select_related('line__order__created_by'):
             order = pick.line.order
@@ -1624,7 +1859,15 @@ class ItemSerialViewSet(viewsets.ModelViewSet):
                 add(None, 'etc', f'출고 스캔됨 ({order.status})', detail, None, order.waybill_no, order.carrier_status)
 
         for ret in serial.returns.select_related('created_by'):
-            add(ret.created_at, 'return', '반품 등록', f'반품 {ret.return_no} · {ret.customer} · {ret.reason}', ret.created_by, ret.waybill_no, ret.carrier_status)
+            add(
+                ret.created_at,
+                'return',
+                '반품 등록',
+                f'반품 {ret.return_no} · {ret.customer} · {ret.reason}',
+                ret.created_by,
+                ret.waybill_no,
+                ret.carrier_status,
+            )
             if ret.status == '회수완료':
                 add(ret.completed_at, 'return', '반품 회수 완료', f'반품 {ret.return_no}')
             elif ret.status == '취소됨':
@@ -1699,31 +1942,40 @@ def cycle_count_plan():
     for loc in locations:
         moves = sum(movement.get(i, 0) for i in stocked[loc.id])
         days = (now - loc.last_counted_at).days if loc.last_counted_at else None
-        row = {'id': loc.id, 'full_code': loc.full_code, 'barcode': loc.barcode, 'items': len(stocked[loc.id]), 'moves_30d': moves,
-               'busy': moves > busy_line, 'days_since': days,
-               'last_counted_at': timezone.localtime(loc.last_counted_at).isoformat() if loc.last_counted_at else None}
+        row = {
+            'id': loc.id,
+            'full_code': loc.full_code,
+            'barcode': loc.barcode,
+            'items': len(stocked[loc.id]),
+            'moves_30d': moves,
+            'busy': moves > busy_line,
+            'days_since': days,
+            'last_counted_at': timezone.localtime(loc.last_counted_at).isoformat() if loc.last_counted_at else None,
+        }
         if loc.last_counted_at and loc.last_counted_at >= today_start:
             done.append(row)
             continue
         # 한 번도 안 했거나 목표 주기를 넘긴 곳이 먼저, 자주 움직이는 곳은 두 배 빨리 돌아옵니다.
-        age = days if days is not None else 10 ** 6
+        age = days if days is not None else 10**6
         row['overdue'] = days is None or days >= settings.CYCLE_COUNT_DAYS
         row['score'] = age * (2 if row['busy'] else 1)
         candidates.append(row)
     candidates.sort(key=lambda r: (-r['score'], r['full_code']))
-    todo = candidates[:max(0, settings.CYCLE_COUNT_DAILY - len(done))]
+    todo = candidates[: max(0, settings.CYCLE_COUNT_DAILY - len(done))]
     return {
-        'daily': settings.CYCLE_COUNT_DAILY, 'cycle_days': settings.CYCLE_COUNT_DAYS,
-        'todo': todo, 'done': sorted(done, key=lambda r: r['full_code']),
-        'overdue': sum(1 for r in candidates if r['overdue']), 'stocked_locations': len(stocked),
+        'daily': settings.CYCLE_COUNT_DAILY,
+        'cycle_days': settings.CYCLE_COUNT_DAYS,
+        'todo': todo,
+        'done': sorted(done, key=lambda r: r['full_code']),
+        'overdue': sum(1 for r in candidates if r['overdue']),
+        'stocked_locations': len(stocked),
     }
 
 
 def replenishment_tasks():
     """기본 위치의 재고가 보충 최소 이하인 상품과, 어느 위치에서 몇 개를 가져오면 되는지.
     다른 위치에 재고가 없으면 sources가 비어 있습니다. (발주가 필요)"""
-    items = (Item.objects.filter(is_active=True, pick_min__gt=0, location__isnull=False)
-             .select_related('location').prefetch_related('stocks__location'))
+    items = Item.objects.filter(is_active=True, pick_min__gt=0, location__isnull=False).select_related('location').prefetch_related('stocks__location')
     tasks = []
     for item in items:
         here = next((st.quantity for st in item.stocks.all() if st.location_id == item.location_id), 0)
@@ -1738,16 +1990,37 @@ def replenishment_tasks():
             take = min(st.quantity, need - sum(src['take'] for src in sources))
             serials = []
             if item.serial_tracked:
-                serials = list(item.serials.filter(status=IN_STOCK, location_id=st.location_id).order_by('serial_number').values_list('serial_number', flat=True)[:take])
+                serials = list(
+                    item.serials.filter(status=IN_STOCK, location_id=st.location_id).order_by('serial_number').values_list('serial_number', flat=True)[:take]
+                )
                 take = len(serials)
             if take:
-                sources.append({'location': st.location_id, 'location_name': st.location.full_code, 'barcode': st.location.barcode,
-                                'quantity': st.quantity, 'take': take, 'serials': serials})
-        tasks.append({
-            'item': item.id, 'sku': item.sku, 'name': item.name, 'serial_tracked': item.serial_tracked,
-            'target': item.location_id, 'target_name': item.location.full_code, 'target_barcode': item.location.barcode,
-            'here': here, 'pick_min': item.pick_min, 'pick_max': item.pick_max, 'need': need, 'sources': sources,
-        })
+                sources.append(
+                    {
+                        'location': st.location_id,
+                        'location_name': st.location.full_code,
+                        'barcode': st.location.barcode,
+                        'quantity': st.quantity,
+                        'take': take,
+                        'serials': serials,
+                    }
+                )
+        tasks.append(
+            {
+                'item': item.id,
+                'sku': item.sku,
+                'name': item.name,
+                'serial_tracked': item.serial_tracked,
+                'target': item.location_id,
+                'target_name': item.location.full_code,
+                'target_barcode': item.location.barcode,
+                'here': here,
+                'pick_min': item.pick_min,
+                'pick_max': item.pick_max,
+                'need': need,
+                'sources': sources,
+            }
+        )
     # 채울 수 있는 것 먼저, 꺼내는 자리가 빈 것 먼저
     return sorted(tasks, key=lambda t: (not t['sources'], t['here'], t['target_name']))
 
@@ -1755,10 +2028,18 @@ def replenishment_tasks():
 def overdue_purchase_orders(limit=10):
     """입고 예정일이 지났는데 아직 다 받지 못한 발주 (오늘 할 일, 슬랙 알림에서 함께 씀)"""
     today = timezone.localdate()
-    pos = (PurchaseOrder.objects.filter(status__in=['발주대기', '입고중'], expected_date__lt=today)
-           .select_related('supplier').order_by('expected_date', 'id'))
-    items = [{'id': po.id, 'po_number': po.po_number, 'supplier': po.supplier.name if po.supplier else '',
-              'expected_date': po.expected_date, 'days': (today - po.expected_date).days, 'status': po.status} for po in pos[:limit]]
+    pos = PurchaseOrder.objects.filter(status__in=['발주대기', '입고중'], expected_date__lt=today).select_related('supplier').order_by('expected_date', 'id')
+    items = [
+        {
+            'id': po.id,
+            'po_number': po.po_number,
+            'supplier': po.supplier.name if po.supplier else '',
+            'expected_date': po.expected_date,
+            'days': (today - po.expected_date).days,
+            'status': po.status,
+        }
+        for po in pos[:limit]
+    ]
     return {'count': pos.count(), 'items': items}
 
 
@@ -1767,11 +2048,15 @@ def carrier_issues(limit=10):
     if not carrier.enabled():
         return {'count': 0, 'items': []}
     stalled_before = timezone.now() - timedelta(hours=STALLED_HOURS)
-    orders = SalesOrder.objects.filter(
-        Q(status='출고대기', waybill_no='')
-        | Q(status__in=['출고대기', '출고완료']) & ~Q(carrier_error='')
-        | Q(status='출고완료', completed_at__lt=stalled_before) & ~Q(waybill_no='') & ~Q(carrier_status__in=['배송완료', '취소'])
-    ).filter(bundle_parent__isnull=True).order_by('-created_at')
+    orders = (
+        SalesOrder.objects.filter(
+            Q(status='출고대기', waybill_no='')
+            | Q(status__in=['출고대기', '출고완료']) & ~Q(carrier_error='')
+            | Q(status='출고완료', completed_at__lt=stalled_before) & ~Q(waybill_no='') & ~Q(carrier_status__in=['배송완료', '취소'])
+        )
+        .filter(bundle_parent__isnull=True)
+        .order_by('-created_at')
+    )
     returns = ReturnOrder.objects.filter(status='회수대기').filter(Q(waybill_no='') | ~Q(carrier_error='')).order_by('-created_at')
 
     def order_reason(order):
@@ -1783,8 +2068,10 @@ def carrier_issues(limit=10):
         return f'출고 후 {hours}시간째 {order.carrier_status or "상태 미확인"}'
 
     items = [{'kind': 'order', 'number': o.order_no, 'customer': o.customer, 'reason': order_reason(o)} for o in orders[:limit]]
-    items += [{'kind': 'return', 'number': r.return_no, 'customer': r.customer, 'reason': r.carrier_error or '회수 요청 안 됨'}
-              for r in returns[:max(0, limit - len(items))]]
+    items += [
+        {'kind': 'return', 'number': r.return_no, 'customer': r.customer, 'reason': r.carrier_error or '회수 요청 안 됨'}
+        for r in returns[: max(0, limit - len(items))]
+    ]
     return {'count': orders.count() + returns.count(), 'items': items}
 
 
@@ -1795,22 +2082,24 @@ class TodayAPIView(APIView):
     def get(self, request):
         low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).count()
         plan = cycle_count_plan()
-        return Response({
-            'carrier_issues': carrier_issues(),
-            'overdue_purchase_orders': overdue_purchase_orders(),
-            'orders': SalesOrder.objects.filter(status='출고대기').count(),
-            'orders_due': due.summary(SalesOrder.objects.filter(status='출고대기').only('status', 'created_at', 'is_urgent')),
-            'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
-            'returns': ReturnOrder.objects.filter(status='회수대기').count(),
-            'low_stock': low_stock,
-            'replenish': len(replenishment_tasks()),
-            'cycle_count': {'todo': len(plan['todo']), 'done': len(plan['done'])},
-            'setup': {
-                'locations': WarehouseLocation.objects.exists(),
-                'items': Item.objects.filter(is_active=True).exists(),
-                'suppliers': Supplier.objects.exists(),
-            },
-        })
+        return Response(
+            {
+                'carrier_issues': carrier_issues(),
+                'overdue_purchase_orders': overdue_purchase_orders(),
+                'orders': SalesOrder.objects.filter(status='출고대기').count(),
+                'orders_due': due.summary(SalesOrder.objects.filter(status='출고대기').only('status', 'created_at', 'is_urgent')),
+                'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
+                'returns': ReturnOrder.objects.filter(status='회수대기').count(),
+                'low_stock': low_stock,
+                'replenish': len(replenishment_tasks()),
+                'cycle_count': {'todo': len(plan['todo']), 'done': len(plan['done'])},
+                'setup': {
+                    'locations': WarehouseLocation.objects.exists(),
+                    'items': Item.objects.filter(is_active=True).exists(),
+                    'suppliers': Supplier.objects.exists(),
+                },
+            }
+        )
 
 
 class DashboardAPIView(APIView):
@@ -1823,15 +2112,18 @@ class DashboardAPIView(APIView):
         offset = timezone.localtime().strftime('%z')
         local_day = Func(
             Func(F('timestamp'), Value('+00:00'), Value(f'{offset[:3]}:{offset[3:]}'), function='CONVERT_TZ', output_field=DateTimeField()),
-            function='DATE', output_field=DateField(),
+            function='DATE',
+            output_field=DateField(),
         )
         daily_logs = (
             InventoryLog.objects.filter(timestamp__gte=thirty_days_ago)
-            .annotate(day=local_day).values('day')
+            .annotate(day=local_day)
+            .values('day')
             .annotate(
                 inbound=Sum('quantity_changed', filter=Q(quantity_changed__gt=0)),
                 outbound=Sum('quantity_changed', filter=Q(quantity_changed__lt=0)),
-            ).order_by('day')
+            )
+            .order_by('day')
         )
         trend_data = [{'date': row['day'].strftime('%Y-%m-%d'), 'inbound': row['inbound'] or 0, 'outbound': abs(row['outbound'] or 0)} for row in daily_logs]
 
@@ -1843,10 +2135,17 @@ class DashboardAPIView(APIView):
 
         today_start = day_start(timezone.localdate())
         today_count = InventoryLog.objects.filter(timestamp__gte=today_start).count()
-        top_moving = InventoryLog.objects.filter(timestamp__gte=thirty_days_ago).values('item__sku', 'item__name').annotate(movements=Count('id')).order_by('-movements')[:5]
+        top_moving = (
+            InventoryLog.objects.filter(timestamp__gte=thirty_days_ago)
+            .values('item__sku', 'item__name')
+            .annotate(movements=Count('id'))
+            .order_by('-movements')[:5]
+        )
         top_moving_data = [{'sku': row['item__sku'], 'name': row['item__name'], 'movements': row['movements']} for row in top_moving]
 
-        return Response({'trend': trend_data, 'occupancy': occupancy_data, 'today_count': today_count, 'top_moving': top_moving_data}, status=status.HTTP_200_OK)
+        return Response(
+            {'trend': trend_data, 'occupancy': occupancy_data, 'today_count': today_count, 'top_moving': top_moving_data}, status=status.HTTP_200_OK
+        )
 
 
 REPORT_MAX_DAYS = 93
@@ -1858,11 +2157,15 @@ WORKS = [name for name, _ in InventoryLog.WORK_CHOICES]
 def worker_stats(start, end):
     """기간(날짜 start~end) 동안 작업자별·일자별 작업 실적.
     건수는 문서(발주·주문·반품) 수, 문서가 없는 작업(이동·조정)은 처리한 줄 수입니다."""
-    logs = (InventoryLog.objects.filter(timestamp__gte=day_start(start), timestamp__lt=day_start(end + timedelta(days=1)))
-            .exclude(work='').values('user_id', 'work', 'reference', 'quantity_changed', 'timestamp', 'description'))
+    logs = (
+        InventoryLog.objects.filter(timestamp__gte=day_start(start), timestamp__lt=day_start(end + timedelta(days=1)))
+        .exclude(work='')
+        .values('user_id', 'work', 'reference', 'quantity_changed', 'timestamp', 'description')
+    )
     users = {u.id: u for u in User.objects.filter(id__in={row['user_id'] for row in logs if row['user_id']})}
-    return_quantities = dict(ReturnOrder.objects.filter(return_no__in={row['reference'] for row in logs if row['work'] == '반품'})
-                             .values_list('return_no', 'quantity'))
+    return_quantities = dict(
+        ReturnOrder.objects.filter(return_no__in={row['reference'] for row in logs if row['work'] == '반품'}).values_list('return_no', 'quantity')
+    )
 
     def blank():
         return {work: {'count': 0, 'lines': 0, 'quantity': 0} for work in WORKS}
@@ -1872,8 +2175,16 @@ def worker_stats(start, end):
         uid = row['user_id']
         if uid not in workers:
             user = users.get(uid)
-            workers[uid] = {'user_id': uid, 'username': user.username if user else '', 'name': user_display(user) if user else '(기록 없음)',
-                            'is_staff': bool(user and user.is_staff), 'works': blank(), 'lines': 0, 'first': None, 'last': None}
+            workers[uid] = {
+                'user_id': uid,
+                'username': user.username if user else '',
+                'name': user_display(user) if user else '(기록 없음)',
+                'is_staff': bool(user and user.is_staff),
+                'works': blank(),
+                'lines': 0,
+                'first': None,
+                'last': None,
+            }
         worker, work = workers[uid], row['work']
         cell = worker['works'][work]
         cell['lines'] += 1
@@ -1890,8 +2201,9 @@ def worker_stats(start, end):
         stamp = timezone.localtime(row['timestamp'])
         worker['first'] = min(worker['first'] or stamp, stamp)
         worker['last'] = max(worker['last'] or stamp, stamp)
-        day = daily.setdefault((stamp.date(), uid), {'date': stamp.date().isoformat(), 'user_id': uid, 'name': worker['name'],
-                                                    'works': {w: 0 for w in WORKS}, 'lines': 0})
+        day = daily.setdefault(
+            (stamp.date(), uid), {'date': stamp.date().isoformat(), 'user_id': uid, 'name': worker['name'], 'works': {w: 0 for w in WORKS}, 'lines': 0}
+        )
         day['works'][work] += 1
         day['lines'] += 1
 
@@ -1904,6 +2216,7 @@ def worker_stats(start, end):
 
 class WorkerReportAPIView(APIView):
     """작업자별 실적: 기간 안에 누가 어떤 작업을 얼마나 했는지 셉니다."""
+
     permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -1919,6 +2232,7 @@ class WorkerReportAPIView(APIView):
 
 class NotificationAPIView(APIView):
     """화면 안 알림. GET: 최근 30건과 안 읽은 수 / POST: 지금까지 모두 읽음으로 표시. 90일 지난 알림은 지웁니다."""
+
     permission_classes = [IsAdminUser]
     KEEP_DAYS = 90
 
@@ -1926,8 +2240,17 @@ class NotificationAPIView(APIView):
         AppNotification.objects.filter(created_at__lt=timezone.now() - timedelta(days=self.KEEP_DAYS)).delete()
         seen = NotificationSeen.objects.filter(user=request.user).values_list('seen_at', flat=True).first()
         unread = AppNotification.objects.filter(created_at__gt=seen) if seen else AppNotification.objects.all()
-        items = [{'id': n.id, 'kind': n.kind, 'message': n.message, 'link': n.link, 'unread': not seen or n.created_at > seen,
-                  'created_at': timezone.localtime(n.created_at).isoformat()} for n in AppNotification.objects.all()[:30]]
+        items = [
+            {
+                'id': n.id,
+                'kind': n.kind,
+                'message': n.message,
+                'link': n.link,
+                'unread': not seen or n.created_at > seen,
+                'created_at': timezone.localtime(n.created_at).isoformat(),
+            }
+            for n in AppNotification.objects.all()[:30]
+        ]
         return Response({'unread': unread.count(), 'items': items})
 
     def post(self, request):
@@ -1937,6 +2260,7 @@ class NotificationAPIView(APIView):
 
 class ReceiptIssueReportAPIView(APIView):
     """입고 검수 차이 리포트: 기간(기본 최근 90일) 동안 거래처별 부족·파손·초과와 발주 대비 비율"""
+
     permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -1944,31 +2268,57 @@ class ReceiptIssueReportAPIView(APIView):
         start = parse_date_param(request.query_params.get('start_date')) or end - timedelta(days=89)
         if start > end:
             return error_response('시작일이 종료일보다 늦습니다.')
-        issues = (ReceiptIssue.objects.filter(created_at__gte=day_start(start), created_at__lt=day_start(end + timedelta(days=1)))
-                  .select_related('po_item__po__supplier', 'po_item__item', 'user').order_by('-created_at'))
-        ordered = dict(PurchaseOrderItem.objects.filter(po__order_date__gte=start, po__order_date__lte=end).exclude(po__status='취소됨')
-                       .values('po__supplier__name').annotate(n=Sum('order_quantity')).values_list('po__supplier__name', 'n'))
+        issues = (
+            ReceiptIssue.objects.filter(created_at__gte=day_start(start), created_at__lt=day_start(end + timedelta(days=1)))
+            .select_related('po_item__po__supplier', 'po_item__item', 'user')
+            .order_by('-created_at')
+        )
+        ordered = dict(
+            PurchaseOrderItem.objects.filter(po__order_date__gte=start, po__order_date__lte=end)
+            .exclude(po__status='취소됨')
+            .values('po__supplier__name')
+            .annotate(n=Sum('order_quantity'))
+            .values_list('po__supplier__name', 'n')
+        )
         suppliers = {}
         for issue in issues:
             name = issue.po_item.po.supplier.name if issue.po_item.po.supplier else '(거래처 미지정)'
-            row = suppliers.setdefault(name, {'supplier': name, 'ordered': ordered.get(name if name != '(거래처 미지정)' else None, 0),
-                                              '부족': 0, '파손': 0, '초과': 0, 'count': 0})
+            row = suppliers.setdefault(
+                name, {'supplier': name, 'ordered': ordered.get(name if name != '(거래처 미지정)' else None, 0), '부족': 0, '파손': 0, '초과': 0, 'count': 0}
+            )
             row[issue.kind] += issue.quantity
             row['count'] += 1
         for row in suppliers.values():
             row['rate'] = round((row['부족'] + row['파손']) / row['ordered'] * 100, 1) if row['ordered'] else None
-        return Response({
-            'start_date': start.isoformat(), 'end_date': end.isoformat(),
-            'suppliers': sorted(suppliers.values(), key=lambda r: (-(r['부족'] + r['파손'] + r['초과']), r['supplier'])),
-            'issues': [{'id': i.id, 'created_at': timezone.localtime(i.created_at).isoformat(), 'po_id': i.po_item.po_id, 'po_number': i.po_item.po.po_number,
-                        'supplier': i.po_item.po.supplier.name if i.po_item.po.supplier else '', 'sku': i.po_item.item.sku, 'name': i.po_item.item.name,
-                        'kind': i.kind, 'quantity': i.quantity, 'note': i.note, 'user': user_display(i.user) if i.user else ''} for i in issues[:300]],
-        })
+        return Response(
+            {
+                'start_date': start.isoformat(),
+                'end_date': end.isoformat(),
+                'suppliers': sorted(suppliers.values(), key=lambda r: (-(r['부족'] + r['파손'] + r['초과']), r['supplier'])),
+                'issues': [
+                    {
+                        'id': i.id,
+                        'created_at': timezone.localtime(i.created_at).isoformat(),
+                        'po_id': i.po_item.po_id,
+                        'po_number': i.po_item.po.po_number,
+                        'supplier': i.po_item.po.supplier.name if i.po_item.po.supplier else '',
+                        'sku': i.po_item.item.sku,
+                        'name': i.po_item.item.name,
+                        'kind': i.kind,
+                        'quantity': i.quantity,
+                        'note': i.note,
+                        'user': user_display(i.user) if i.user else '',
+                    }
+                    for i in issues[:300]
+                ],
+            }
+        )
 
 
 class StockAgingAPIView(APIView):
     """재고 회전·장기 재고: 최근 N일(기본 90) 출고량으로 상품별 재고 일수와 회전율, 마지막 출고일을 계산합니다.
     장기 재고 = 재고가 있는데 N일 동안 한 번도 출고되지 않은 상품"""
+
     permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -1976,8 +2326,9 @@ class StockAgingAPIView(APIView):
         if not 7 <= days <= 365:
             return error_response('기간은 7~365일로 정하세요.')
         since = timezone.now() - timedelta(days=days)
-        outbound = dict(InventoryLog.objects.filter(work='출고', timestamp__gte=since).values('item_id')
-                        .annotate(n=Sum('quantity_changed')).values_list('item_id', 'n'))
+        outbound = dict(
+            InventoryLog.objects.filter(work='출고', timestamp__gte=since).values('item_id').annotate(n=Sum('quantity_changed')).values_list('item_id', 'n')
+        )
         last_out = dict(InventoryLog.objects.filter(work='출고').values('item_id').annotate(t=Max('timestamp')).values_list('item_id', 't'))
         last_in = dict(InventoryLog.objects.filter(work='입고').values('item_id').annotate(t=Max('timestamp')).values_list('item_id', 't'))
         now = timezone.now()
@@ -1986,27 +2337,42 @@ class StockAgingAPIView(APIView):
             out = abs(outbound.get(item.id) or 0)
             daily = out / days
             last = last_out.get(item.id)
-            rows.append({
-                'id': item.id, 'sku': item.sku, 'name': item.name, 'category': item.category.name if item.category else '',
-                'location': item.location.full_code if item.location else '', 'abc_grade': item.abc_grade or '',
-                'quantity': item.quantity, 'outbound': out,
-                'cover_days': round(item.quantity / daily) if daily else None,  # 지금 재고로 버틸 수 있는 날 수
-                'turnover': round(out / item.quantity, 2) if item.quantity else None,  # 기간 출고량 ÷ 지금 재고
-                'last_out': timezone.localtime(last).date().isoformat() if last else None,
-                'idle_days': (now - last).days if last else None,
-                'last_in': timezone.localtime(last_in[item.id]).date().isoformat() if item.id in last_in else None,
-                'aging': item.quantity > 0 and out == 0,
-            })
+            rows.append(
+                {
+                    'id': item.id,
+                    'sku': item.sku,
+                    'name': item.name,
+                    'category': item.category.name if item.category else '',
+                    'location': item.location.full_code if item.location else '',
+                    'abc_grade': item.abc_grade or '',
+                    'quantity': item.quantity,
+                    'outbound': out,
+                    'cover_days': round(item.quantity / daily) if daily else None,  # 지금 재고로 버틸 수 있는 날 수
+                    'turnover': round(out / item.quantity, 2) if item.quantity else None,  # 기간 출고량 ÷ 지금 재고
+                    'last_out': timezone.localtime(last).date().isoformat() if last else None,
+                    'idle_days': (now - last).days if last else None,
+                    'last_in': timezone.localtime(last_in[item.id]).date().isoformat() if item.id in last_in else None,
+                    'aging': item.quantity > 0 and out == 0,
+                }
+            )
         aging = [r for r in rows if r['aging']]
-        return Response({
-            'days': days, 'items': rows,
-            'summary': {'stocked': sum(1 for r in rows if r['quantity'] > 0), 'aging_items': len(aging), 'aging_quantity': sum(r['quantity'] for r in aging),
-                        'no_stock_moving': sum(1 for r in rows if r['quantity'] == 0 and r['outbound'] > 0)},
-        })
+        return Response(
+            {
+                'days': days,
+                'items': rows,
+                'summary': {
+                    'stocked': sum(1 for r in rows if r['quantity'] > 0),
+                    'aging_items': len(aging),
+                    'aging_quantity': sum(r['quantity'] for r in aging),
+                    'no_stock_moving': sum(1 for r in rows if r['quantity'] == 0 and r['outbound'] > 0),
+                },
+            }
+        )
 
 
 class ReturnAnalysisAPIView(APIView):
     """반품 분석: 기간(기본 최근 90일) 동안 사유별·상품별·처리 결과별 반품과, 같은 기간 출고 대비 반품률"""
+
     permission_classes = [IsAdminUser]
 
     def get(self, request):
@@ -2016,28 +2382,52 @@ class ReturnAnalysisAPIView(APIView):
             return error_response('시작일이 종료일보다 늦습니다.')
         lo, hi = day_start(start), day_start(end + timedelta(days=1))
         returns = ReturnOrder.objects.filter(created_at__gte=lo, created_at__lt=hi).exclude(status='취소됨')
-        shipped = dict(InventoryLog.objects.filter(work='출고', timestamp__gte=lo, timestamp__lt=hi).values('item_id')
-                       .annotate(n=Sum('quantity_changed')).values_list('item_id', 'n'))
+        shipped = dict(
+            InventoryLog.objects.filter(work='출고', timestamp__gte=lo, timestamp__lt=hi)
+            .values('item_id')
+            .annotate(n=Sum('quantity_changed'))
+            .values_list('item_id', 'n')
+        )
         total = returns.count()
-        by_reason = [{'reason': r['reason'], 'count': r['n'], 'quantity': r['q'], 'share': round(r['n'] / total * 100, 1)}
-                     for r in returns.values('reason').annotate(n=Count('id'), q=Sum('quantity')).order_by('-n', 'reason')]
+        by_reason = [
+            {'reason': r['reason'], 'count': r['n'], 'quantity': r['q'], 'share': round(r['n'] / total * 100, 1)}
+            for r in returns.values('reason').annotate(n=Count('id'), q=Sum('quantity')).order_by('-n', 'reason')
+        ]
         by_item = []
         for r in returns.values('item_id', 'item__sku', 'item__name').annotate(n=Count('id'), q=Sum('quantity')).order_by('-q')[:30]:
             out = abs(shipped.get(r['item_id']) or 0)
             reasons = returns.filter(item_id=r['item_id']).values('reason').annotate(n=Count('id')).order_by('-n')
-            by_item.append({'sku': r['item__sku'], 'name': r['item__name'], 'count': r['n'], 'quantity': r['q'], 'shipped': out,
-                            'rate': round(r['q'] / out * 100, 1) if out else None, 'top_reason': reasons[0]['reason'] if reasons else ''})
+            by_item.append(
+                {
+                    'sku': r['item__sku'],
+                    'name': r['item__name'],
+                    'count': r['n'],
+                    'quantity': r['q'],
+                    'shipped': out,
+                    'rate': round(r['q'] / out * 100, 1) if out else None,
+                    'top_reason': reasons[0]['reason'] if reasons else '',
+                }
+            )
         done = returns.filter(status='회수완료')
         by_result = [{'result': r['result'] or '(기록 없음)', 'count': r['n']} for r in done.values('result').annotate(n=Count('id')).order_by('-n')]
         shipped_total = abs(sum(shipped.values())) if shipped else 0
         returned_total = returns.aggregate(q=Coalesce(Sum('quantity'), 0))['q']
-        return Response({
-            'start_date': start.isoformat(), 'end_date': end.isoformat(),
-            'summary': {'returns': total, 'quantity': returned_total, 'shipped': shipped_total,
-                        'rate': round(returned_total / shipped_total * 100, 1) if shipped_total else None,
-                        'waiting': returns.filter(status='회수대기').count()},
-            'by_reason': by_reason, 'by_item': by_item, 'by_result': by_result,
-        })
+        return Response(
+            {
+                'start_date': start.isoformat(),
+                'end_date': end.isoformat(),
+                'summary': {
+                    'returns': total,
+                    'quantity': returned_total,
+                    'shipped': shipped_total,
+                    'rate': round(returned_total / shipped_total * 100, 1) if shipped_total else None,
+                    'waiting': returns.filter(status='회수대기').count(),
+                },
+                'by_reason': by_reason,
+                'by_item': by_item,
+                'by_result': by_result,
+            }
+        )
 
 
 def daily_summary(day):
@@ -2054,8 +2444,10 @@ def daily_summary(day):
         }
 
     returned = ReturnOrder.objects.filter(status='회수완료', completed_at__gte=start, completed_at__lt=end)
-    adjust = logs.filter(work='조정').aggregate(plus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__gt=0)), 0),
-                                              minus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__lt=0)), 0))
+    adjust = logs.filter(work='조정').aggregate(
+        plus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__gt=0)), 0),
+        minus=Coalesce(Sum('quantity_changed', filter=Q(quantity_changed__lt=0)), 0),
+    )
     pending_orders = SalesOrder.objects.filter(status='출고대기')
     low_stock = Item.objects.filter(is_active=True, quantity__lte=F('safety_stock')).order_by('quantity', 'sku')
     workers, _ = worker_stats(day, day)
@@ -2066,8 +2458,9 @@ def daily_summary(day):
         'returns': {
             'documents': returned.count(),
             'quantity': returned.aggregate(total=Coalesce(Sum('quantity'), 0))['total'],
-            'results': [{'result': row['result'] or '(기록 없음)', 'count': row['n']}
-                        for row in returned.values('result').annotate(n=Count('id')).order_by('-n')],
+            'results': [
+                {'result': row['result'] or '(기록 없음)', 'count': row['n']} for row in returned.values('result').annotate(n=Count('id')).order_by('-n')
+            ],
         },
         'moves': logs.filter(work='이동').count(),
         'adjust': {'lines': logs.filter(work='조정').count(), 'plus': adjust['plus'], 'minus': abs(adjust['minus'])},
@@ -2080,17 +2473,23 @@ def daily_summary(day):
             'orders': pending_orders.count(),
             'orders_carried': pending_orders.filter(created_at__lt=start).count(),  # 그날 이전에 들어와 아직 못 나간 주문
             'orders_due': due.summary(pending_orders.only('status', 'created_at', 'is_urgent')),
-            'pending_orders': [{'order_no': o.order_no, 'customer': o.customer, 'created_at': timezone.localtime(o.created_at).isoformat()}
-                               for o in pending_orders.order_by('created_at')[:20]],
+            'pending_orders': [
+                {'order_no': o.order_no, 'customer': o.customer, 'created_at': timezone.localtime(o.created_at).isoformat()}
+                for o in pending_orders.order_by('created_at')[:20]
+            ],
             'returns': ReturnOrder.objects.filter(status='회수대기').count(),
             'purchase_orders': PurchaseOrder.objects.filter(status__in=['발주대기', '입고중']).count(),
             'overdue_purchase_orders': overdue_purchase_orders()['count'],
             'carrier_issues': carrier_issues(limit=20),
-            'low_stock': {'count': low_stock.count(),
-                          'items': [{'sku': i.sku, 'name': i.name, 'quantity': i.quantity, 'safety_stock': i.safety_stock} for i in low_stock[:20]]},
+            'low_stock': {
+                'count': low_stock.count(),
+                'items': [{'sku': i.sku, 'name': i.name, 'quantity': i.quantity, 'safety_stock': i.safety_stock} for i in low_stock[:20]],
+            },
         },
-        'workers': [{'name': w['name'], 'username': w['username'], 'lines': w['lines'],
-                     'works': {k: v['count'] for k, v in w['works'].items() if v['count']}} for w in workers],
+        'workers': [
+            {'name': w['name'], 'username': w['username'], 'lines': w['lines'], 'works': {k: v['count'] for k, v in w['works'].items() if v['count']}}
+            for w in workers
+        ],
         'calculated_at': timezone.localtime().isoformat(),
     }
 
@@ -2099,9 +2498,9 @@ def close_message(day, summary, user, note):
     s, b = summary, summary['backlog']
     lines = [
         f'[일일 마감] {day.isoformat()} ({user_display(user)})',
-        f"입고 {s['inbound']['documents']}건 {s['inbound']['quantity']}개 · 출고 {s['outbound']['documents']}건 {s['outbound']['quantity']}개 · 반품 회수 {s['returns']['documents']}건",
-        f"남은 일: 출고대기 {b['orders']}건(이월 {b['orders_carried']}) · 회수대기 {b['returns']}건 · 입고 지연 {b['overdue_purchase_orders']}건"
-        f" · 택배 확인 {b['carrier_issues']['count']}건 · 재고 부족 {b['low_stock']['count']}종",
+        f'입고 {s["inbound"]["documents"]}건 {s["inbound"]["quantity"]}개 · 출고 {s["outbound"]["documents"]}건 {s["outbound"]["quantity"]}개 · 반품 회수 {s["returns"]["documents"]}건',
+        f'남은 일: 출고대기 {b["orders"]}건(이월 {b["orders_carried"]}) · 회수대기 {b["returns"]}건 · 입고 지연 {b["overdue_purchase_orders"]}건'
+        f' · 택배 확인 {b["carrier_issues"]["count"]}건 · 재고 부족 {b["low_stock"]["count"]}종',
     ]
     if note:
         lines.append(f'메모: {note}')
@@ -2109,25 +2508,35 @@ def close_message(day, summary, user, note):
 
 
 def close_payload(record):
-    return {'date': record.date.isoformat(), 'note': record.note, 'closed_by': user_display(record.closed_by) if record.closed_by else '',
-            'closed_at': timezone.localtime(record.closed_at).isoformat()}
+    return {
+        'date': record.date.isoformat(),
+        'note': record.note,
+        'closed_by': user_display(record.closed_by) if record.closed_by else '',
+        'closed_at': timezone.localtime(record.closed_at).isoformat(),
+    }
 
 
 class DailyCloseAPIView(APIView):
     """GET ?date=: 그날 요약 (마감했으면 마감 때 저장한 내용) / POST {date, note}: 마감 (다시 마감하면 새로 계산해 덮어씀)"""
+
     permission_classes = [IsAdminUser]
 
     def get(self, request):
         day = parse_date_param(request.query_params.get('date')) or timezone.localdate()
         record = DailyClose.objects.filter(date=day).select_related('closed_by').first()
-        history = [{**close_payload(r), 'outbound': r.summary['outbound']['documents'], 'backlog_orders': r.summary['backlog']['orders']}
-                   for r in DailyClose.objects.select_related('closed_by')[:14]]
-        return Response({
-            'date': day.isoformat(), 'today': timezone.localdate().isoformat(),
-            'closed': close_payload(record) if record else None,
-            'summary': record.summary if record else daily_summary(day),
-            'history': history,
-        })
+        history = [
+            {**close_payload(r), 'outbound': r.summary['outbound']['documents'], 'backlog_orders': r.summary['backlog']['orders']}
+            for r in DailyClose.objects.select_related('closed_by')[:14]
+        ]
+        return Response(
+            {
+                'date': day.isoformat(),
+                'today': timezone.localdate().isoformat(),
+                'closed': close_payload(record) if record else None,
+                'summary': record.summary if record else daily_summary(day),
+                'history': history,
+            }
+        )
 
     def post(self, request):
         day = parse_date_param(request.data.get('date')) or timezone.localdate()
@@ -2137,7 +2546,7 @@ class DailyCloseAPIView(APIView):
         summary = daily_summary(day)
         record, created = DailyClose.objects.update_or_create(date=day, defaults={'summary': summary, 'note': note, 'closed_by': request.user})
         send_webhook_alert(close_message(day, summary, request.user, note), kind='일일 마감', link='/daily-close')
-        return Response({'message': f"{day.isoformat()} {'마감' if created else '다시 마감'} 완료", 'closed': close_payload(record), 'summary': summary})
+        return Response({'message': f'{day.isoformat()} {"마감" if created else "다시 마감"} 완료', 'closed': close_payload(record), 'summary': summary})
 
 
 MOVED_PATTERN = re.compile(r'\] (\d+)개')
@@ -2176,8 +2585,10 @@ class CarrierWebhookView(APIView):
         waybill_no = str(event.get('waybill_no') or '')
         record = None
         if waybill_no:
-            record = (SalesOrder.objects.select_for_update().filter(waybill_no=waybill_no, bundle_parent__isnull=True).first()
-                      or ReturnOrder.objects.select_for_update().filter(waybill_no=waybill_no).first())
+            record = (
+                SalesOrder.objects.select_for_update().filter(waybill_no=waybill_no, bundle_parent__isnull=True).first()
+                or ReturnOrder.objects.select_for_update().filter(waybill_no=waybill_no).first()
+            )
         if not record:
             return Response({'result': 'ERROR', 'message': '없는 운송장입니다.'}, status=status.HTTP_404_NOT_FOUND)
         if save_carrier_event(record, event):
@@ -2188,11 +2599,13 @@ class CarrierWebhookView(APIView):
 @method_decorator(transaction.non_atomic_requests, name='dispatch')
 class HealthView(APIView):
     """서버 상태 확인(로그인 없이): DB에 연결되는지 봅니다. 감시 도구나 브라우저로 /api/health/ 를 열어 확인합니다."""
+
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request):
         from django.db import connection
+
         try:
             with connection.cursor() as cursor:
                 cursor.execute('SELECT 1')
@@ -2227,6 +2640,7 @@ class PasswordChangeView(APIView):
 
 class UserViewSet(AuditMixin, viewsets.ModelViewSet):
     """관리자가 계정을 만들고 권한·사용 여부를 바꿉니다. 이력을 지키기 위해 삭제 대신 사용 중지합니다."""
+
     queryset = User.objects.order_by('-is_active', 'username')
     serializer_class = UserSerializer
     permission_classes = [IsAdminUser]
@@ -2247,10 +2661,16 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
         if user.is_staff:
             return error_response('관리자 계정은 사원증으로 로그인할 수 없습니다. 현장작업자 계정에 발급하세요.')
         code = 'EMP-' + ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(12))
-        WorkerBadge.objects.update_or_create(user=user, defaults={'code': code})
+        WorkerBadge.objects.update_or_create(user=user, defaults={'code': WorkerBadge.digest(code)})
         audit.record(request.user, user, '사원증 발급', after={})
-        return Response({'message': f'[{user.username}] 사원증을 발급했습니다. 예전 사원증은 더 이상 쓸 수 없습니다.',
-                         'code': code, 'username': user.username, 'name': user.first_name})
+        return Response(
+            {
+                'message': f'[{user.username}] 사원증을 발급했습니다. 예전 사원증은 더 이상 쓸 수 없습니다.',
+                'code': code,
+                'username': user.username,
+                'name': user.first_name,
+            }
+        )
 
     @action(detail=True, methods=['post'])
     def reset_password(self, request, pk=None):
@@ -2271,6 +2691,7 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
 
 class BadgeLoginView(APIView):
     """사원증 바코드로 로그인합니다. 현장작업자 계정만 되며, 비밀번호 로그인과 같은 횟수 제한을 둡니다."""
+
     authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
@@ -2278,11 +2699,12 @@ class BadgeLoginView(APIView):
 
     def post(self, request):
         code = clean_code(request.data.get('code'))
-        badge = WorkerBadge.objects.select_related('user').filter(code=code).first() if code else None
+        badge = WorkerBadge.objects.select_related('user').filter(code=WorkerBadge.digest(code)).first() if code else None
         user = badge.user if badge else None
         if not user or not user.is_active or user.is_staff:
             return error_response('등록되지 않았거나 쓸 수 없는 사원증입니다.', status.HTTP_401_UNAUTHORIZED)
         refresh = RefreshToken.for_user(user)
         update_last_login(None, user)
-        return Response({'access': str(refresh.access_token), 'refresh': str(refresh), 'role': '현장작업자',
-                         'username': user.username, 'name': user.first_name})
+        return Response(
+            {'access': str(refresh.access_token), 'refresh': str(refresh), 'role': '현장작업자', 'username': user.username, 'name': user.first_name}
+        )

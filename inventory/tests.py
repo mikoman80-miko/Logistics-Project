@@ -8,7 +8,22 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import AppNotification, DailyClose, InventoryLog, Item, MasterChange, ReceiptIssue, ItemSerial, ItemStock, PurchaseOrder, PurchaseOrderItem, ReturnOrder, SalesOrder, SalesOrderItem, Supplier, WarehouseLocation
+from .models import (
+    AppNotification,
+    DailyClose,
+    InventoryLog,
+    Item,
+    ReceiptIssue,
+    ItemSerial,
+    ItemStock,
+    PurchaseOrder,
+    PurchaseOrderItem,
+    ReturnOrder,
+    SalesOrder,
+    SalesOrderItem,
+    Supplier,
+    WarehouseLocation,
+)
 
 ITEMS = '/api/inventory/items/'
 SERIALS = '/api/inventory/serials/'
@@ -325,11 +340,15 @@ class PurchaseOrderCreateTests(BaseCase):
         self.assertRegex(res.data['po_number'], r'^PO-\d{8}-0001$')
         self.assertEqual(res.data['items'][0]['item_sku'], 'A-1')
         self.client.force_authenticate(self.worker)
-        res = self.client.post(f"{POS}{res.data['id']}/receive_inbound/", {'sku': 'A-1', 'quantity': 3}, format='json')
+        res = self.client.post(f'{POS}{res.data["id"]}/receive_inbound/', {'sku': 'A-1', 'quantity': 3}, format='json')
         self.assertEqual(res.data['status'], '입고완료')
 
     def test_create_validation(self):
-        for lines in ([], [{'item': self.item.id, 'order_quantity': 0}], [{'item': self.item.id, 'order_quantity': 1}, {'item': self.item.id, 'order_quantity': 1}]):
+        for lines in (
+            [],
+            [{'item': self.item.id, 'order_quantity': 0}],
+            [{'item': self.item.id, 'order_quantity': 1}, {'item': self.item.id, 'order_quantity': 1}],
+        ):
             self.assertEqual(self.make(lines).status_code, 400, lines)
         self.assertEqual(self.make([{'item': self.item.id, 'order_quantity': 1}], supplier=99999).status_code, 400)
 
@@ -390,10 +409,9 @@ class LogQueryTests(BaseCase):
     def setUp(self):
         super().setUp()
         self.client.force_authenticate(self.admin)
-        InventoryLog.objects.bulk_create([
-            InventoryLog(item=self.item if i % 2 else self.other, action='IN' if i % 3 else 'OUT', quantity_changed=1 if i % 3 else -1)
-            for i in range(120)
-        ])
+        InventoryLog.objects.bulk_create(
+            [InventoryLog(item=self.item if i % 2 else self.other, action='IN' if i % 3 else 'OUT', quantity_changed=1 if i % 3 else -1) for i in range(120)]
+        )
 
     def test_paginated_by_default(self):
         res = self.client.get(LOGS)
@@ -476,7 +494,7 @@ class SerialRuleTests(BaseCase):
         self.assertTrue(res.data['serial_tracked'])
         res = self.client.post(ITEMS, {'sku': 'G', 'name': '사은품', 'item_type': '사은품'})
         self.assertFalse(res.data['serial_tracked'])
-        res = self.client.patch(f"{ITEMS}{res.data['id']}/", {'serial_tracked': True}, format='json')
+        res = self.client.patch(f'{ITEMS}{res.data["id"]}/', {'serial_tracked': True}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertTrue(res.data['serial_tracked'])
         res = self.client.post(ITEMS, {'sku': 'X', 'name': '예외', 'item_type': '구성품', 'serial_tracked': True})
@@ -507,7 +525,9 @@ class OrderScanTests(BaseCase):
         self.s1 = ItemSerial.objects.create(item=self.product, serial_number='SN1')
         self.s2 = ItemSerial.objects.create(item=self.product, serial_number='SN2')
         self.client.force_authenticate(self.admin)
-        res = self.client.post(ORDERS, {'customer': 'c', 'items': [{'item': self.product.id, 'quantity': 1}, {'item': self.item.id, 'quantity': 2}]}, format='json')
+        res = self.client.post(
+            ORDERS, {'customer': 'c', 'items': [{'item': self.product.id, 'quantity': 1}, {'item': self.item.id, 'quantity': 2}]}, format='json'
+        )
         self.order = res.data['id']
         self.client.force_authenticate(self.worker)
 
@@ -569,10 +589,10 @@ class OrderScanTests(BaseCase):
 
     def test_reset_line(self):
         res = self.scan('SN1')
-        line = next(l for l in res.data['order']['items'] if l['item_sku'] == 'P-1')
+        line = next(line for line in res.data['order']['items'] if line['item_sku'] == 'P-1')
         self.assertEqual(line['scanned_serials'], ['SN1'])
         res = self.client.post(f'{ORDERS}{self.order}/reset_line/', {'line': line['id']}, format='json')
-        line = next(l for l in res.data['order']['items'] if l['item_sku'] == 'P-1')
+        line = next(line for line in res.data['order']['items'] if line['item_sku'] == 'P-1')
         self.assertEqual((line['picked_quantity'], line['scanned_serials']), (0, []))
         self.assertEqual(self.scan('SN1').status_code, 200)
 
@@ -734,7 +754,7 @@ class ReceiptCancelTests(BaseCase):
     def test_po_lists_received_serials(self):
         self.receive(sku='P-1', serial_number='SN1')
         self.client.force_authenticate(self.admin)
-        line = next(l for l in self.client.get(f'{POS}{self.po.id}/').data['items'] if l['item_sku'] == 'P-1')
+        line = next(line for line in self.client.get(f'{POS}{self.po.id}/').data['items'] if line['item_sku'] == 'P-1')
         self.assertEqual(line['received_serials'], ['SN1'])
 
 
@@ -808,7 +828,7 @@ class OrderEditTests(BaseCase):
         self.assertEqual(res.status_code, 200, res.data)
         self.order.refresh_from_db()
         self.assertEqual((self.order.customer, self.order.note), ('새고객', '메모'))
-        self.assertEqual([(l.item_id, l.quantity) for l in self.order.items.all()], [(self.other.id, 2)])
+        self.assertEqual([(line.item_id, line.quantity) for line in self.order.items.all()], [(self.other.id, 2)])
         self.assertEqual(self.edit(items=[{'item': self.other.id}]).status_code, 400)
         self.assertEqual(self.edit(items=[]).status_code, 400)
 
@@ -894,7 +914,9 @@ class AddressImportTests(BaseCase):
     def setUp(self):
         super().setUp()
         self.client.force_authenticate(self.admin)
-        self.order = SalesOrder.objects.create(order_no='ORD-1', customer='c', contact_name='김수령', contact_phone='010-1111-2222', zipcode='06236', address='옛 주소')
+        self.order = SalesOrder.objects.create(
+            order_no='ORD-1', customer='c', contact_name='김수령', contact_phone='010-1111-2222', zipcode='06236', address='옛 주소'
+        )
         SalesOrder.objects.create(order_no='ORD-2', customer='c', status='출고완료')
 
     def rows(self):
@@ -949,8 +971,9 @@ class ReorderSuggestionTests(BaseCase):
         res = self.client.get(self.URL)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data['lead_days'], 7)
-        self.assertEqual([(r['sku'], r['suggested'], r['incoming'], r['usage_30d'], r['supplier_name']) for r in res.data['rows']],
-                         [('A-1', 5, 2, 30, '미래전자')])
+        self.assertEqual(
+            [(r['sku'], r['suggested'], r['incoming'], r['usage_30d'], r['supplier_name']) for r in res.data['rows']], [('A-1', 5, 2, 30, '미래전자')]
+        )
 
     def test_worker_cannot_see(self):
         self.client.force_authenticate(self.worker)
@@ -1047,8 +1070,9 @@ class ScanAuditTests(BaseCase):
         self.assertEqual(res.status_code, 200)
         rows = {r['sku']: r for r in res.data['rows']}
         self.assertEqual((rows['A-1']['system'], rows['A-1']['counted']), (5, 3))
-        self.assertEqual((rows['P-1']['system'], rows['P-1']['counted'], rows['P-1']['missing'], rows['P-1']['unexpected']),
-                         (3, 3, ['SN3'], ['SN-OUT (출고완료)']))
+        self.assertEqual(
+            (rows['P-1']['system'], rows['P-1']['counted'], rows['P-1']['missing'], rows['P-1']['unexpected']), (3, 3, ['SN3'], ['SN-OUT (출고완료)'])
+        )
         self.assertTrue(rows['B-1']['new_here'])  # 이 위치에 기록이 없던 상품 (미지정 재고 1개)
         self.assertEqual(res.data['unknown'], ['NOPE'])
         self.assertEqual(len(res.data['warnings']), 1)  # 시리얼 상품을 상품코드로 스캔
@@ -1093,12 +1117,12 @@ class PartialShipmentTests(BaseCase):
         self.item.refresh_from_db()
         self.other.refresh_from_db()
         self.assertEqual(self.order.status, '출고완료')
-        self.assertEqual([(l.item_id, l.quantity) for l in self.order.items.all()], [(self.item.id, 2)])
+        self.assertEqual([(line.item_id, line.quantity) for line in self.order.items.all()], [(self.item.id, 2)])
         self.assertEqual((self.item.quantity, self.other.quantity), (3, 1))
         back = SalesOrder.objects.get(split_from=self.order)
         self.assertIn(back.order_no, res.data['message'])
         self.assertEqual((back.status, back.contact_name, back.note), ('출고대기', '김수령', 'ORD-1의 남은 수량 / 문 앞'))
-        self.assertEqual(sorted((l.item_id, l.quantity) for l in back.items.all()), sorted([(self.item.id, 1), (self.other.id, 1)]))
+        self.assertEqual(sorted((line.item_id, line.quantity) for line in back.items.all()), sorted([(self.item.id, 1), (self.other.id, 1)]))
         self.assertEqual(self.client.get(f'{ORDERS}{back.id}/').data['split_from_no'], 'ORD-1')
 
     def test_partial_needs_a_scan_and_no_bundle(self):
@@ -1124,6 +1148,7 @@ class OverduePurchaseOrderTests(BaseCase):
 
         from io import StringIO
         from django.core.management import call_command
+
         out = StringIO()
         with patch('inventory.management.commands.notify_overdue.send_webhook_alert') as send:
             call_command('notify_overdue', stdout=out)
@@ -1179,7 +1204,9 @@ class LocationStockTests(BaseCase):
         res = self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 2}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(self.stocks(self.item), {'A-R1-1단': 3, 'B-R1-1단': 2})
-        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 9}, format='json').status_code, 400)
+        self.assertEqual(
+            self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 9}, format='json').status_code, 400
+        )
         data = self.client.get(f'{ITEMS}{self.item.id}/').data
         self.assertEqual(([s['location_name'] for s in data['stocks']], data['unassigned']), (['A-R1-1단', 'B-R1-1단'], 0))
 
@@ -1187,8 +1214,12 @@ class LocationStockTests(BaseCase):
         ItemSerial.objects.create(item=self.product, serial_number='SN1', location=self.a)
         ItemStock.objects.create(item=self.product, location=self.a, quantity=1)
         Item.objects.filter(pk=self.product.pk).update(quantity=1)
-        self.assertEqual(self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 1}, format='json').status_code, 400)
-        self.assertEqual(self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'serials': ['SN1']}, format='json').status_code, 200)
+        self.assertEqual(
+            self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'quantity': 1}, format='json').status_code, 400
+        )
+        self.assertEqual(
+            self.client.post(f'{ITEMS}{self.product.id}/move_stock/', {'from': self.a.id, 'to': self.b.id, 'serials': ['SN1']}, format='json').status_code, 200
+        )
         self.assertEqual(ItemSerial.objects.get(serial_number='SN1').location, self.b)
 
         # 기본 위치를 바꾸면 그 위치에 있던 재고가 함께 옮겨집니다.
@@ -1222,7 +1253,7 @@ class BadgeLoginTests(BaseCase):
         res = self.client.post(self.URL, {'code': old})
         self.assertEqual(res.status_code, 200)
         self.assertEqual((res.data['role'], res.data['username']), ('현장작업자', 'worker'))
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {res.data['access']}")
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {res.data["access"]}')
         self.assertEqual(self.client.get('/api/inventory/today/').status_code, 200)
         self.client.credentials()
         new = self.issue(self.worker).data['code']
@@ -1235,6 +1266,14 @@ class BadgeLoginTests(BaseCase):
         User.objects.filter(pk=self.worker.pk).update(is_active=False)
         self.assertEqual(self.client.post(self.URL, {'code': code}).status_code, 401)
         self.assertEqual(self.client.post(self.URL, {'code': 'EMP-WRONG'}).status_code, 401)
+
+    def test_code_is_stored_as_hash(self):
+        from .models import WorkerBadge
+
+        code = self.issue(self.worker).data['code']
+        stored = WorkerBadge.objects.get(user=self.worker).code
+        self.assertNotEqual(stored, code)
+        self.assertEqual((len(stored), stored), (64, WorkerBadge.digest(code)))
 
 
 class WorkerReportTests(BaseCase):
@@ -1350,6 +1389,7 @@ class ShipDueTests(BaseCase):
 
     def test_due_at_cutoff_and_weekend(self):
         from . import due
+
         cases = [
             ('2026-11-04 09:00', '2026-11-04 15:00'),  # 수요일 마감 전 → 그날
             ('2026-11-04 15:00', '2026-11-05 15:00'),  # 마감 시각부터는 다음 날
@@ -1363,6 +1403,7 @@ class ShipDueTests(BaseCase):
 
     def test_status_and_today_summary(self):
         from . import due
+
         order = SalesOrder.objects.create(order_no='ORD-D1', customer='고객')
         SalesOrder.objects.filter(pk=order.pk).update(created_at=self.at('2026-11-04 09:00'))
         order.refresh_from_db()
@@ -1407,7 +1448,9 @@ class ReplenishmentTests(BaseCase):
         self.assertEqual((task['here'], task['need'], task['sources'][0]['take'], task['sources'][0]['location']), (2, 8, 8, self.reserve.id))
         self.assertEqual(self.client.get('/api/inventory/today/').data['replenish'], 1)
         # 작업자는 일반 이동은 못 하고, 기본 위치로 채우는 보충만 합니다.
-        self.assertEqual(self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.reserve.id, 'to': self.face.id, 'quantity': 8}, format='json').status_code, 403)
+        self.assertEqual(
+            self.client.post(f'{ITEMS}{self.item.id}/move_stock/', {'from': self.reserve.id, 'to': self.face.id, 'quantity': 8}, format='json').status_code, 403
+        )
         res = self.client.post(f'{ITEMS}{self.item.id}/replenish/', {'from': self.reserve.id, 'quantity': 8}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertEqual(ItemStock.objects.get(item=self.item, location=self.face).quantity, 10)
@@ -1513,6 +1556,7 @@ class MasterChangeTests(BaseCase):
 
 def user_display_name(user):
     from .serializers import user_display
+
     return user_display(user)
 
 
@@ -1530,7 +1574,7 @@ class LowStockAlertTests(BaseCase):
         low = [c.args[0] for c in alert.call_args_list if c.args[0].startswith('[재고 부족]')]
         self.assertEqual(len(low), 1)
         self.assertIn('재고 4개 ≤ 안전 재고 5개 · 진행 중인 발주 없음', low[0])
-        self.adjust(5)   # 8: 안전 재고 위로 → 표시 해제
+        self.adjust(5)  # 8: 안전 재고 위로 → 표시 해제
         self.item.refresh_from_db()
         self.assertFalse(self.item.low_stock_alerted)
         po = PurchaseOrder.objects.create(po_number='PO-X', status='발주대기')
@@ -1572,6 +1616,7 @@ class ListPagingTests(BaseCase):
 class MonitorTests(APITestCase):
     def setUp(self):
         from . import monitor
+
         self.monitor = monitor
         monitor._last_sent.clear()
         monitor._carrier_failures = 0
@@ -1579,11 +1624,13 @@ class MonitorTests(APITestCase):
     @patch('inventory.monitor.threading.Thread')
     def test_same_error_alerts_once_per_window(self, thread):
         import logging
+
         handler = self.monitor.AlertLogHandler()
         try:
             raise ValueError('잘못된 값')
         except ValueError:
             import sys
+
             record = logging.LogRecord('django.request', logging.ERROR, __file__, 1, 'Internal Server Error: /api/x/', None, sys.exc_info())
         handler.emit(record)
         handler.emit(record)
@@ -1680,8 +1727,15 @@ class AnalysisReportTests(BaseCase):
 
     def test_return_analysis(self):
         for reason, quantity, status in [('단순변심', 2, '회수완료'), ('단순변심', 1, '회수대기'), ('불량', 1, '회수완료'), ('불량', 5, '취소됨')]:
-            ReturnOrder.objects.create(return_no=f'RTN-{reason}{quantity}', customer='고객', reason=reason, item=self.item, quantity=quantity,
-                                       status=status, result='재고로 되돌림' if status == '회수완료' else '')
+            ReturnOrder.objects.create(
+                return_no=f'RTN-{reason}{quantity}',
+                customer='고객',
+                reason=reason,
+                item=self.item,
+                quantity=quantity,
+                status=status,
+                result='재고로 되돌림' if status == '회수완료' else '',
+            )
         data = self.client.get('/api/inventory/reports/returns/').data
         self.assertEqual(data['summary'], {'returns': 3, 'quantity': 4, 'shipped': 9, 'rate': 44.4, 'waiting': 1})
         self.assertEqual([(r['reason'], r['count']) for r in data['by_reason']], [('단순변심', 2), ('불량', 1)])
@@ -1716,6 +1770,7 @@ class NotificationTests(BaseCase):
     def test_rolled_back_change_leaves_no_notice(self):
         from django.db import transaction
         from .views import send_webhook_alert
+
         with self.captureOnCommitCallbacks(execute=True):
             try:
                 with transaction.atomic():

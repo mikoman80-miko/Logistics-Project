@@ -4,6 +4,8 @@ const path = require('path')
 
 const root = __dirname
 const runPython = path.join('scripts', 'run-python.js')
+// 운영 서버 포트. 바꾸려면 여기 한 곳만 고칩니다. (택배사 알림 주소도 이 포트를 씁니다)
+const PORT = process.env.WMS_PORT || '8080'
 
 module.exports = {
   apps: [
@@ -15,9 +17,9 @@ module.exports = {
       env: {
         PYTHONUNBUFFERED: '1',
         PYTHONUTF8: '1',
-        WMS_PORT: '8080',
+        WMS_PORT: PORT,
         // 택배사가 배송 상태를 알려줄 주소도 운영 서버로 바꿉니다.
-        CARRIER_CALLBACK_URL: 'http://127.0.0.1:8080/api/carrier/webhook/',
+        CARRIER_CALLBACK_URL: `http://127.0.0.1:${PORT}/api/carrier/webhook/`,
       },
       // 운영 중에는 파일 변경으로 재시작하지 않습니다. 업데이트 후 npm run prod:restart
       watch: false,
@@ -27,6 +29,8 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 3000,
       time: true,
+      // 메모리가 이만큼 넘게 늘어나면(누수 등) 자동으로 다시 시작합니다.
+      max_memory_restart: '700M',
     },
   ],
 }
