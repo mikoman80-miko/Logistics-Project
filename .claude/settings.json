@@ -1,0 +1,28 @@
+{
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(./verify.sh)",
+      "Bash(myenv/Scripts/python.exe -m ruff *)",
+      "Bash(myenv/Scripts/python.exe -X utf8 manage.py test *)",
+      "Bash(npm run build)",
+      "Bash(npm run e2e)",
+      "Bash(npm run e2e:prod)",
+      "Bash(npx eslint *)",
+      "Bash(git status)",
+      "Bash(git diff *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(npm publish *)",
+      "Bash(sudo *)",
+      "Read(.env*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)"
+    ]
+  }
+}

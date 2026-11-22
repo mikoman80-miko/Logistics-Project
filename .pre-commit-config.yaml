@@ -1,0 +1,28 @@
+repos:
+  # 1. 기본 파일 위생 및 보안(대용량/비밀키) 체크
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace        # 불필요한 줄 끝 공백 제거
+      - id: end-of-file-fixer          # 파일 끝 빈 줄 자동 추가
+      - id: check-yaml                 # YAML 문법 오류 체크
+      - id: check-json                 # JSON 문법 오류 체크
+      - id: check-added-large-files    # 500KB 이상 대용량 파일 커밋 차단
+      - id: detect-private-key         # 개인키/보안키 유출 차단
+
+  # 2. 백엔드 (Python) - Ruff 린트 및 포맷 (설정: ruff.toml, 버전은 requirements.txt와 같게)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff                       # 문법 에러, 안 쓰는 import 자동 수정
+        args: [--fix]
+      - id: ruff-format                # 커밋하는 파일만 서식 정리
+
+  # 3. 프론트엔드 (Vue) - ESLint 검사 (경고 0개 강제, 설정: wms-frontend/eslint.config.js)
+  - repo: local
+    hooks:
+      - id: eslint
+        name: frontend-eslint
+        entry: bash -c 'cd wms-frontend && npx eslint --max-warnings=0 "${@#wms-frontend/}"' --
+        language: system
+        files: ^wms-frontend/(src|e2e)/.*\.(js|vue)$

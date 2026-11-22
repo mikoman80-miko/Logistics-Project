@@ -26,3 +26,6 @@ staticfiles/
 
 # 서버 로그
 logs/
+
+# 편집기 작업공간 파일
+*.code-workspace
