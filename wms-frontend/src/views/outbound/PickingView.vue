@@ -45,7 +45,7 @@
     <PickListPrintModal v-if="pickListOpen" :orders="pickOrders" @close="pickListOpen = false" />
 
     <div class="page-split">
-      <div class="panel w-full md:w-[520px] shrink-0">
+      <div class="panel w-full md:w-[560px] shrink-0">
         <div class="panel-header">
           <span class="panel-title">출고 주문 목록</span>
           <div class="flex gap-1">
@@ -70,12 +70,12 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th width="28"></th>
-                <th width="165">주문번호</th>
+                <th width="16"></th>
+                <th width="145">주문번호</th>
                 <th>거래처/고객</th>
-                <th width="50">품목</th>
-                <th width="150">출고 마감</th>
-                <th width="70">택배</th>
+                <th width="34">품목</th>
+                <th width="110">출고 마감</th>
+                <th width="44">택배</th>
               </tr>
             </thead>
             <tbody>
@@ -92,7 +92,7 @@
                   <span v-else-if="bundleCandidates.has(order.id)" class="ml-1 px-1 text-caption text-warning border border-warning" title="같은 배송지의 출고대기 주문이 있습니다">묶음 가능</span>
                 </td>
                 <td class="text-right">{{ order.items.length }}종</td>
-                <td class="text-center truncate" :class="dueLabel(order, now) && toneClass[dueLabel(order, now).tone]">{{ dueLabel(order, now)?.text.replace(' 마감 · ', ' · ') || '-' }}</td>
+                <td class="text-center truncate" :class="dueLabel(order, now) && toneClass[dueLabel(order, now).tone]" :title="dueLabel(order, now)?.text">{{ dueLabel(order, now)?.text.replace(' 마감 · ', ' · ') || '-' }}</td>
                 <td class="text-center truncate" :class="order.carrier_error ? 'text-danger font-bold' : ''">{{ order.carrier_error ? '오류' : (order.carrier_status || '-') }}</td>
               </tr>
             </tbody>
@@ -127,13 +127,13 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th width="130">보관 위치</th>
-                <th width="150">상품코드</th>
+                <th width="100">보관 위치</th>
+                <th width="130">상품코드</th>
                 <th>상품명</th>
-                <th width="80">시리얼</th>
-                <th width="80">지시 수량</th>
-                <th width="80">스캔 수량</th>
-                <th width="80">현재 재고</th>
+                <th width="56">시리얼</th>
+                <th width="72">지시 수량</th>
+                <th width="72">스캔 수량</th>
+                <th width="72">현재 재고</th>
               </tr>
             </thead>
             <tbody>

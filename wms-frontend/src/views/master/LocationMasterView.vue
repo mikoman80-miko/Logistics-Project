@@ -1,9 +1,9 @@
 <template>
   <div class="page">
     <!-- 등록 패널 -->
-    <div class="panel p-1.5 print:hidden">
-      <div class="modal-header mb-1.5">보관 위치 등록</div>
-      <form @submit.prevent="handleAddLocation" class="flex flex-wrap items-center gap-1.5 text-body p-1">
+    <div class="panel print:hidden">
+      <div class="panel-header"><span class="panel-title">보관 위치 등록</span></div>
+      <form @submit.prevent="handleAddLocation" class="flex flex-wrap items-center gap-1.5 text-body p-2.5">
         구역(Zone): <input v-model="form.zone" type="text"
           class="field w-[120px]"
           placeholder="예: A동, 냉장" required />

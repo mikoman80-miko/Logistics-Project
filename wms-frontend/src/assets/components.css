@@ -6,6 +6,9 @@
 @layer base {
   body {
     margin: 0;
+    /* 한글 단어가 중간에서 끊기지 않게, 줄바꿈은 띄어쓰기 단위로 합니다. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -215,7 +218,7 @@
   }
 
   .form-table th {
-    @apply w-[120px] px-2 py-1 text-right font-bold bg-surface-head border border-line;
+    @apply w-[120px] px-2 py-1 text-right font-bold whitespace-nowrap bg-surface-head border border-line;
   }
 
   .form-table td {
@@ -276,7 +279,7 @@
 
   /* ---------- 첫 화면 카드 ---------- */
   .today-card {
-    @apply flex flex-col items-center p-4 cursor-pointer text-body text-ink bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)] hover:bg-primary-soft;
+    @apply flex flex-col items-center p-4 text-center cursor-pointer text-body text-ink bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)] hover:bg-primary-soft;
     font-family: inherit;
   }
 

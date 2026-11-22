@@ -9,3 +9,11 @@ export const daysAgo = (days) => {
   date.setDate(date.getDate() - days)
   return localDate(date)
 }
+
+// 화면 공통 날짜·시각 표시 YYYY-MM-DD HH:mm (빈 값은 '-')
+export const formatDateTime = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${localDate(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}

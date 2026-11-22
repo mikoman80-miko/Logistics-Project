@@ -16,10 +16,10 @@
         <div class="modal-footer print:hidden">
           <button
             class="btn btn-primary"
-            @click="printBarcode">[인쇄]</button>
+            @click="printBarcode">인쇄</button>
           <button
             class="btn"
-            @click="closeBarcode">[닫기]</button>
+            @click="closeBarcode">닫기</button>
         </div>
       </div>
     </div>
@@ -48,7 +48,7 @@
             @click="printBarcode">전체 일괄 인쇄</button>
           <button
             class="btn"
-            @click="closeBulkBarcode">[닫기]</button>
+            @click="closeBulkBarcode">닫기</button>
         </div>
       </div>
     </div>
@@ -66,10 +66,10 @@
             <thead>
               <tr>
                 <th
-                 
+
                   width="150">발생일시</th>
                 <th
-                 
+
                   width="100">구분</th>
                 <th width="80">변동수량</th>
                 <th width="90">처리자</th>
@@ -81,7 +81,7 @@
                 <td colspan="5" class="text-center">기록이 없습니다.</td>
               </tr>
               <tr v-for="log in itemHistoryLogs" :key="log.id">
-                <td class="text-center">{{ new Date(log.timestamp).toLocaleString('ko-KR') }}</td>
+                <td class="text-center">{{ formatDateTime(log.timestamp) }}</td>
                 <td class="text-center">{{ log.action_display }}</td>
                 <td class="text-right font-bold"
                   :class="log.quantity_changed > 0 ? 'text-primary' : 'text-danger'">
@@ -96,7 +96,7 @@
         <div class="modal-footer">
           <button
             class="btn"
-            @click="closeHistory">[닫기]</button>
+            @click="closeHistory">닫기</button>
         </div>
       </div>
     </div>
@@ -204,25 +204,25 @@
           <thead>
             <tr>
               <th
-               
+
                 width="30"><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th>
               <th
-               
+
                 width="120">상품코드</th>
               <th
                >
                 상품명</th>
               <th
-               
-                width="100">보관 구역</th>
+
+                width="140">보관 구역</th>
               <th
-               
+
                 width="80">현재 재고</th>
               <th
-               
+
                 width="120">재고 조정</th>
               <th
-               
+
                 width="280">관리 도구</th>
             </tr>
           </thead>
@@ -267,22 +267,14 @@
                   @click="handleUpdateQuantity(item, -1)" :disabled="item.quantity === 0">출고</button>
                 </template>
               </td>
-              <td class="text-center">
-                <button
-                  class="btn btn-link"
-                  @click="startEdit(item)">[수정]</button>
-                <button
-                  class="btn btn-link"
-                  @click="openBarcode(item)">[인쇄]</button>
-                <button
-                  class="btn btn-link"
-                  @click="openHistory(item)">[이력]</button>
-                <button
-                  class="btn btn-link"
-                  @click="moveItem = item">[이동]</button>
-                <button
-                  class="btn btn-link"
-                  @click="handleDeleteItem(item.id)">[삭제]</button>
+              <td>
+                <div class="flex justify-center gap-1">
+                  <button class="btn btn-sm" @click="startEdit(item)">수정</button>
+                  <button class="btn btn-sm" @click="openBarcode(item)">인쇄</button>
+                  <button class="btn btn-sm" @click="openHistory(item)">이력</button>
+                  <button class="btn btn-sm" @click="moveItem = item">이동</button>
+                  <button class="btn btn-sm btn-danger" @click="handleDeleteItem(item.id)">삭제</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -306,9 +298,9 @@
 import { ref, computed, onActivated, watch, nextTick } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useToastStore } from '../stores/toastStore';
-import axios from 'axios';
 import { downloadXlsx } from '../utils/excel';
 import { apiErrorMessage } from '../utils/apiError';
+import { formatDateTime } from '../utils/date';
 import { playBeep } from '../utils/beep';
 import Barcode from '../components/Barcode.vue';
 import MoveStockModal from '../components/MoveStockModal.vue';
@@ -333,7 +325,6 @@ const itemsPerPage = ref(30);
 const editingId = ref(null); const editForm = ref({ name: '', location: '' });
 const startEdit = (item) => { editingId.value = item.id; editForm.value = { name: item.name, location: item.location }; };
 const saveEdit = async (id) => { if (!editForm.value.name) return; await store.updateItemDetails(id, editForm.value.name, editForm.value.location); editingId.value = null; };
-const cancelEdit = () => { editingId.value = null; };
 
 const selectedBarcodeItem = ref(null); const openBarcode = (item) => { selectedBarcodeItem.value = item; };
 const closeBarcode = () => { selectedBarcodeItem.value = null; }; const printBarcode = () => { window.print(); };
@@ -395,7 +386,7 @@ const handleBatchMove = async () => {
   try {
     await Promise.all(selectedIds.value.map(id => { const targetItem = store.items.find(item => item.id === id); return store.updateItemDetails(id, targetItem.name, target.id); }));
     selectedIds.value = []; toast.addToast('이동 완료', 'success');
-  } catch (e) { toast.addToast('이동 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); }
+  } catch { toast.addToast('이동 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); }
 };
 const handleBatchDelete = async () => {
   if (!(await dialog.confirm(`선택한 ${selectedIds.value.length}건을 삭제하시겠습니까?`, { danger: true, okText: '삭제' }))) return;

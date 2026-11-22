@@ -28,12 +28,12 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th width="160">사원번호</th>
+              <th width="130">사원번호</th>
               <th>이름</th>
-              <th width="130">권한</th>
-              <th width="190">마지막 로그인</th>
-              <th width="100">상태</th>
-              <th width="370">관리</th>
+              <th width="120">권한</th>
+              <th width="140">마지막 로그인</th>
+              <th width="80">상태</th>
+              <th width="420">관리</th>
             </tr>
           </thead>
           <tbody>
@@ -46,9 +46,9 @@
                   <option value="현장작업자">현장작업자</option>
                 </select>
               </td>
-              <td class="text-center">{{ user.last_login ? new Date(user.last_login).toLocaleString('ko-KR') : '로그인 기록 없음' }}</td>
+              <td class="text-center">{{ user.last_login ? formatDateTime(user.last_login) : '로그인 기록 없음' }}</td>
               <td class="text-center font-bold" :class="user.is_active ? 'text-success' : 'text-muted'">{{ user.is_active ? '사용 중' : '사용 중지' }}</td>
-              <td class="text-center">
+              <td class="text-center whitespace-nowrap">
                 <button class="btn btn-sm" :disabled="user.is_superuser && !iAmSuperuser" @click="rename(user)">이름 변경</button>
                 <button class="btn btn-sm ml-1" :disabled="user.is_superuser && !iAmSuperuser" @click="resetPassword(user)">비밀번호 초기화</button>
                 <button v-if="user.role === '현장작업자' && user.is_active" class="btn btn-sm ml-1" @click="issueBadge(user)">{{ user.has_badge ? '사원증 재발급' : '사원증 발급' }}</button>
@@ -70,6 +70,7 @@ import { useToastStore } from '../../stores/toastStore'
 import { useDialogStore } from '../../stores/dialogStore'
 import { useAuthStore } from '../../stores/auth'
 import { apiErrorMessage } from '../../utils/apiError'
+import { formatDateTime } from '../../utils/date'
 import BadgeCardModal from '../../components/BadgeCardModal.vue'
 
 const toast = useToastStore()

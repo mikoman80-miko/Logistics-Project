@@ -1,8 +1,8 @@
 <template>
   <!-- 화면 안 알림: 재고 부족, 택배 장애, 서버 오류, 입고 지연, 일일 마감 등. 1분마다 새로 확인합니다. -->
   <div ref="rootRef" class="relative mb-1">
-    <button class="btn btn-sm" :class="{ 'btn-danger': unread > 0 }" :aria-label="`알림 ${unread}건`" @click="toggle">
-      🔔 알림<b v-if="unread"> {{ unread > 99 ? '99+' : unread }}</b>
+    <button class="btn btn-sm gap-1" :class="{ 'btn-danger': unread > 0 }" :aria-label="`알림 ${unread}건`" @click="toggle">
+      🔔 알림<b v-if="unread">{{ unread > 99 ? '99+' : unread }}</b>
     </button>
     <div v-if="open" class="absolute right-0 top-[calc(100%+4px)] z-[1200] w-[460px] max-h-[70vh] overflow-y-auto bg-white border border-line-strong shadow-lg">
       <div class="panel-header"><span class="panel-title">알림</span><span class="text-muted">최근 30건 · 90일 보관</span></div>

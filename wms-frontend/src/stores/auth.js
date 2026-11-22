@@ -64,7 +64,7 @@ export const useAuthStore = defineStore('auth', () => {
             originalRequest.headers['Authorization'] = `Bearer ${newToken}`
             return axios(originalRequest) // 🌟 중단된 요청 재실행! (사용자는 에러를 모름)
           }
-        } catch (refreshError) {
+        } catch {
           console.error('토큰 갱신 실패')
         }
         if (isAuthenticated.value) {

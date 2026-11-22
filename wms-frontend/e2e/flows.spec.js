@@ -212,6 +212,7 @@ test('발주 등록 → 현장 입고(시리얼) → 입고 취소', async () =>
   await toast(admin, '등록 완료')
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('1')
   await worker.locator('button.work-row').first().click()
   await scan(worker, 'E2E-DEV')
@@ -234,6 +235,7 @@ test('발주 등록 → 현장 입고(시리얼) → 입고 취소', async () =>
 test('시리얼 상품 출고 → 반품 등록 시 회수 요청 → 시리얼 이력', async () => {
   await createOrder(admin, '세번째고객', 'E2E-DEV')
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('2')
   await worker.locator('button.work-row', { hasText: '세번째고객' }).click()
   await scan(worker, 'SN-E2E-1')
@@ -277,6 +279,7 @@ test('엑셀 다운로드와 오늘 내 작업, 비밀번호 변경', async () =
   expect(download.suggestedFilename()).toMatch(/^재고현황_.*\.xlsx$/)
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('4')
   await expect(worker).toHaveURL(/\/work\/today$/)
   await expect(worker.getByText('처리 건수')).toBeVisible()
@@ -324,7 +327,7 @@ test('사용자 등록과 사용 중지', async () => {
 
 test('위치별 재고: 재고 이동, 다른 선반에 입고, 출고 위치 안내', async () => {
   await admin.goto('/stock')
-  await orderRow(admin, 'E2E-CABLE').getByRole('button', { name: '[이동]' }).click()
+  await orderRow(admin, 'E2E-CABLE').getByRole('button', { name: '이동', exact: true }).click()
   const modal = admin.locator('.modal', { hasText: '재고 이동' })
   await selectByText(modal.locator('label:has-text("어디로") select'), 'B-R02-2단')
   await modal.locator('input[type=number]').fill('2')
@@ -347,6 +350,7 @@ test('위치별 재고: 재고 이동, 다른 선반에 입고, 출고 위치 �
   const poNo = (await admin.getByText(/등록 완료/).first().textContent()).match(/PO-\d+-\d+/)[0]
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('1')
   await worker.locator('button.work-row', { hasText: poNo }).click()
   await scan(worker, shelfB.barcode)  // 선반 라벨 → 상품 순서
@@ -374,6 +378,7 @@ test('시리얼 없는 상품 반품: 원래 주문 선택 → 현장에서 상�
   await expect(orderRow(admin, '첫번째고객').first()).toContainText('수량 1개')
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('3')
   await scan(worker, 'E2E-CABLE')
   await expect(worker.getByRole('button', { name: /재고로 되돌림/ })).toBeVisible()
@@ -394,6 +399,7 @@ test('부분 출고: 스캔한 만큼 출고하고 남은 수량은 새 주문',
   await toast(admin, '등록 완료 (운송장')
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('2')
   await worker.locator('button.work-row', { hasText: '부분고객' }).click()
   await scan(worker, 'E2E-CABLE')
@@ -684,6 +690,7 @@ test('입고 검수 차이: 파손·덜 옴을 기록하면 발주서가 마감�
   const poNo = (await admin.getByText(/등록 완료/).first().textContent()).match(/PO-\d+-\d+/)[0]
 
   await worker.goto('/work')
+  await expect(worker.locator('.work-card').first()).toBeVisible()  // 화면이 뜬 뒤에 숫자 키
   await worker.keyboard.press('1')
   await worker.locator('button.work-row', { hasText: poNo }).click()
   await scan(worker, 'E2E-CABLE')
@@ -740,6 +747,7 @@ test('화면 안 알림: 앞에서 생긴 알림을 보고, 열면 읽음 처리
 
 test('현장 도움말: F1로 화면별 순서와 오류 해결 방법을 보고 Esc로 닫기', async () => {
   await worker.goto('/work/outbound')
+  await expect(worker.getByRole('button', { name: '도움말 (F1)' })).toBeVisible()  // 화면이 뜬 뒤에 F1
   await worker.keyboard.press('F1')
   const help = worker.getByRole('dialog', { name: '도움말' })
   await expect(help).toContainText('도움말 · 출고')

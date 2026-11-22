@@ -59,7 +59,8 @@
 
       <div class="p-2.5 flex-1 overflow-auto bg-surface-app print:p-0 print:overflow-visible print:bg-white">
         <router-view v-slot="{ Component, route }">
-          <keep-alive>
+          <!-- 탭 화면을 살려 두되, 오래 쓰지 않은 화면은 15개까지만 남겨 메모리가 계속 늘지 않게 합니다. -->
+          <keep-alive :max="15">
             <component :is="Component" :key="route.path" />
           </keep-alive>
         </router-view>

@@ -96,26 +96,26 @@
           <thead>
             <tr>
               <th
-               
+
                 width="30"><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th>
               <th
-               
+
                 width="150">시리얼 번호 (S/N)</th>
               <th
-               
+
                 width="120">상품코드</th>
               <th
                >
                 상품명</th>
               <th
-               
+
                 width="100">물류 상태</th>
               <th width="110">위치</th>
               <th
-               
+
                 width="100">품질 등급</th>
               <th
-               
+
                 width="150">최근 업데이트 일시</th>
             </tr>
           </thead>
@@ -139,8 +139,7 @@
               <td class="text-center font-mono">{{ serial.location_name || '-' }}</td>
               <td class="text-center font-bold"
                 :class="qualityColor(serial.quality)">{{ serial.quality }}</td>
-              <td class="text-center">{{ new
-                Date(serial.updated_at).toLocaleString('ko-KR') }}</td>
+              <td class="text-center whitespace-nowrap">{{ formatDateTime(serial.updated_at) }}</td>
             </tr>
           </tbody>
         </table>
@@ -164,6 +163,7 @@ import { ref, computed, onActivated, watch } from 'vue'
 import { useInventoryStore } from '../../stores/inventory'
 import { useToastStore } from '../../stores/toastStore'
 import { apiErrorMessage } from '../../utils/apiError'
+import { formatDateTime } from '../../utils/date'
 import { useDialogStore } from '../../stores/dialogStore'
 import SerialHistoryModal from '../../components/SerialHistoryModal.vue'
 

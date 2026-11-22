@@ -82,7 +82,7 @@
                >
                 상품명</th>
               <th
-               
+
                 width="150">카테고리</th>
               <!-- 🌟 NEW: ABC 등급 표시 컬럼 -->
               <th
@@ -91,7 +91,7 @@
               <th width="80">현재수량</th>
               <th width="80">안전 재고</th>
               <th
-               
+
                 width="180">보관 위치</th>
               <th width="170">관리 도구</th>
             </tr>
@@ -362,7 +362,7 @@ const runABCAnalysis = async () => {
     const res = await axios.post('/api/inventory/items/analyze_abc/');
     toast.addToast(res.data.message, 'success');
     await fetchItems(); // 분석 후 테이블 갱신
-  } catch (err) {
+  } catch {
     toast.addToast('ABC 분석 중 오류가 발생했습니다.', 'error');
   }
 };

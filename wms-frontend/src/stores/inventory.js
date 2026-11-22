@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { downloadXlsx } from '../utils/excel'
@@ -36,17 +36,12 @@ export const useInventoryStore = defineStore('inventory', () => {
     return { saved: rows.length, total }
   }
 
-  const addItem = async (itemData) => {
-    await axios.post('/api/inventory/items/', itemData)
-    await fetchItems()
-  }
-
   const updateQuantity = async (id, newQuantity, isAudit = false) => {
     const body = isAudit ? { quantity: newQuantity, physicalQty: newQuantity } : { quantity: newQuantity }
     await axios.patch(`/api/inventory/items/${id}/`, body)
     await fetchItems()
   }
-  
+
   // 화면의 옛 수량이 아니라 증감량을 보내, 서버의 최신 수량 기준으로 계산합니다.
   const adjustStock = async (id, change) => {
     await axios.post(`/api/inventory/items/${id}/adjust_stock/`, { change })
@@ -60,33 +55,11 @@ export const useInventoryStore = defineStore('inventory', () => {
   const fetchPage = async (url, params, page, pageSize = 50) =>
     (await axios.get(url, { params: { ...listParams(params), page, page_size: pageSize } })).data
 
-  const fetchOrders = async (params) => {
-    const response = await axios.get('/api/inventory/orders/', { params: listParams(params) })
-    return response.data
-  }
-
   const createOrder = async (body) => (await axios.post('/api/inventory/orders/', body)).data
   const cancelOrder = async (id) => (await axios.post(`/api/inventory/orders/${id}/cancel/`)).data
 
-  // 주문 하나를 한 번에 출고합니다. 하나라도 부족하면 전체가 처리되지 않습니다.
-  const completeOrder = async (id) => {
-    const response = await axios.post(`/api/inventory/orders/${id}/complete/`)
-    await fetchItems()
-    return response.data
-  }
-
-  const fetchReturns = async (params) => {
-    const response = await axios.get('/api/inventory/returns/', { params: listParams(params) })
-    return response.data
-  }
-
   const createReturn = async (body) => (await axios.post('/api/inventory/returns/', body)).data
   const cancelReturn = async (id) => (await axios.post(`/api/inventory/returns/${id}/cancel/`)).data
-
-  const completeReturn = async (id, status, quality, detail) => {
-    const response = await axios.post(`/api/inventory/returns/${id}/complete/`, { status, quality, detail })
-    return response.data
-  }
 
   const locations = ref([])
   const fetchLocations = async () => {
@@ -118,29 +91,17 @@ export const useInventoryStore = defineStore('inventory', () => {
     }
   }
 
-  const totalQuantity = computed(() => items.value.reduce((sum, item) => sum + item.quantity, 0))
-  const totalSkuCount = computed(() => items.value.length)
-  const lowStockItems = computed(() => items.value.filter(item => item.quantity <= item.safety_stock && item.quantity > 0))
-
-  const serials = ref([])
-
-  const fetchSerials = async () => {
-    const response = await axios.get('/api/inventory/serials/')
-    serials.value = response.data
-  }
-
   const batchUpdateSerials = async (ids, status, quality) => {
     await axios.patch('/api/inventory/serials/batch_update/', {
       ids, status, quality
     })
   }
 
-  return { 
-    items, fetchItems, fetchLogs, downloadLogs, addItem, updateQuantity, 
-    updateItemDetails, deleteItem, scanSerial, serials, fetchSerials, batchUpdateSerials,
+  return {
+    items, fetchItems, fetchLogs, downloadLogs, updateQuantity,
+    updateItemDetails, deleteItem, scanSerial, batchUpdateSerials,
     adjustStock, locations, fetchLocations,
-    fetchPage, fetchOrders, createOrder, cancelOrder, completeOrder,
-    fetchReturns, createReturn, cancelReturn, completeReturn,
-    totalQuantity, totalSkuCount, lowStockItems 
+    fetchPage, createOrder, cancelOrder,
+    createReturn, cancelReturn,
   }
 })

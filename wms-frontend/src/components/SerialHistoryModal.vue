@@ -15,7 +15,7 @@
               <span class="absolute -left-[7px] top-1 w-3 h-3 rounded-full border-2 border-white" :class="dotColor(event.kind)"></span>
               <div class="flex flex-wrap items-baseline gap-x-2">
                 <b>{{ event.title }}</b>
-                <span class="text-caption text-muted">{{ event.time ? new Date(event.time).toLocaleString('ko-KR') : '진행 중' }}</span>
+                <span class="text-caption text-muted">{{ event.time ? formatDateTime(event.time) : '진행 중' }}</span>
                 <span v-if="event.user" class="text-caption text-muted">· {{ event.user }}</span>
               </div>
               <div v-if="event.detail" class="text-muted">{{ event.detail }}</div>
@@ -41,6 +41,7 @@ import { onMounted, ref } from 'vue'
 import axios from 'axios'
 import { useToastStore } from '../stores/toastStore'
 import { apiErrorMessage } from '../utils/apiError'
+import { formatDateTime } from '../utils/date'
 
 const props = defineProps({
   serialId: { type: Number, required: true },

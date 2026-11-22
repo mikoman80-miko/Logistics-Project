@@ -19,7 +19,7 @@
     <ol v-if="record.carrier_events?.length" class="flex flex-wrap gap-1 m-0 mt-2 p-0 list-none">
       <li v-for="(event, i) in record.carrier_events" :key="i" class="px-2 py-0.5 border border-line bg-surface-head text-caption"
         :title="event.location">
-        <b>{{ event.status }}</b> {{ formatTime(event.occurred_at) }}
+        <b>{{ event.status }}</b> {{ formatDateTime(event.occurred_at) }}
       </li>
     </ol>
   </div>
@@ -27,6 +27,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { formatDateTime } from '../utils/date'
 
 const props = defineProps({
   record: { type: Object, required: true },
@@ -40,5 +41,4 @@ const statusColor = computed(() => {
   if (s === '취소') return 'text-muted'
   return 'text-primary'
 })
-const formatTime = (value) => new Date(value).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 </script>

@@ -1,24 +1,25 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
-import DashboardView from '../views/DashboardView.vue'
+// 화면은 처음 열 때 불러옵니다. (현장 PC가 관리 화면 코드까지 미리 받지 않게) 로그인 화면만 바로 씁니다.
+const HomeView = () => import('../views/HomeView.vue')
+const DashboardView = () => import('../views/DashboardView.vue')
 import LoginView from '../views/LoginView.vue'
-import TodayView from '../views/TodayView.vue'
-import StockAuditView from '../views/inventory/StockAuditView.vue'
-import PickingView from '../views/outbound/PickingView.vue'
-import SerialTrackingView from '../views/inventory/SerialTrackingView.vue'
-import ReturnReceivingView from '../views/inbound/ReturnReceivingView.vue'
-import LocationMasterView from '../views/master/LocationMasterView.vue'
-import ItemMasterView from '../views/master/ItemMasterView.vue'
-import SupplierView from '../views/master/SupplierView.vue'
-import UserManageView from '../views/master/UserManageView.vue'
-import PurchaseOrderView from '../views/inbound/PurchaseOrderView.vue'
-import WorkHomeView from '../views/work/WorkHomeView.vue'
-import WorkInboundView from '../views/work/WorkInboundView.vue'
-import WorkOutboundView from '../views/work/WorkOutboundView.vue'
-import WorkReturnView from '../views/work/WorkReturnView.vue'
-import WorkTodayView from '../views/work/WorkTodayView.vue'
-import WorkPickingView from '../views/work/WorkPickingView.vue'
-import WorkReplenishView from '../views/work/WorkReplenishView.vue'
+const TodayView = () => import('../views/TodayView.vue')
+const StockAuditView = () => import('../views/inventory/StockAuditView.vue')
+const PickingView = () => import('../views/outbound/PickingView.vue')
+const SerialTrackingView = () => import('../views/inventory/SerialTrackingView.vue')
+const ReturnReceivingView = () => import('../views/inbound/ReturnReceivingView.vue')
+const LocationMasterView = () => import('../views/master/LocationMasterView.vue')
+const ItemMasterView = () => import('../views/master/ItemMasterView.vue')
+const SupplierView = () => import('../views/master/SupplierView.vue')
+const UserManageView = () => import('../views/master/UserManageView.vue')
+const PurchaseOrderView = () => import('../views/inbound/PurchaseOrderView.vue')
+const WorkHomeView = () => import('../views/work/WorkHomeView.vue')
+const WorkInboundView = () => import('../views/work/WorkInboundView.vue')
+const WorkOutboundView = () => import('../views/work/WorkOutboundView.vue')
+const WorkReturnView = () => import('../views/work/WorkReturnView.vue')
+const WorkTodayView = () => import('../views/work/WorkTodayView.vue')
+const WorkPickingView = () => import('../views/work/WorkPickingView.vue')
+const WorkReplenishView = () => import('../views/work/WorkReplenishView.vue')
 
 const isAdmin = () => localStorage.getItem('user_role') === '관리자'
 const homePath = () => (isAdmin() ? '/today' : '/work')
