@@ -1,5 +1,5 @@
 <template>
-  <WorkLayout title="집품 (여러 주문 한 번에)">
+  <WorkLayout title="집품">
     <!-- 1. 주문 고르기 -->
     <div v-if="!started" class="flex flex-col gap-4 h-full min-h-0">
       <div class="text-4xl font-bold">함께 꺼낼 주문을 누르세요 <span class="text-3xl text-muted">({{ chosen.length }}건 선택)</span></div>
