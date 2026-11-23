@@ -12,7 +12,7 @@ repos:
 
   # 2. 백엔드 (Python) - Ruff 린트 및 포맷 (설정: ruff.toml, 버전은 requirements.txt와 같게)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.3
+    rev: v0.17.6
     hooks:
       - id: ruff                       # 문법 에러, 안 쓰는 import 자동 수정
         args: [--fix]
