@@ -10,17 +10,16 @@
         <div class="modal-content text-center">
           <h2 class="m-0 mb-2.5 text-[16px]">{{ selectedBarcodeItem.name }}</h2>
           <p class="m-0 mb-2.5 font-bold">구역: {{ selectedBarcodeItem.location_name || '미지정' }}</p>
-          <img :src="`https://barcode.tec-it.com/barcode.ashx?data=${selectedBarcodeItem.sku}&code=Code128`"
-            alt="Barcode" class="max-w-full border border-black mx-auto" />
+          <Barcode :value="selectedBarcodeItem.sku" :height="70" />
           <p class="font-mono text-heading mt-1 font-bold">{{ selectedBarcodeItem.sku }}</p>
         </div>
         <div class="modal-footer print:hidden">
           <button
             class="btn btn-primary"
-            @click="printBarcode">[인쇄]</button>
+            @click="printBarcode">인쇄</button>
           <button
             class="btn"
-            @click="closeBarcode">[닫기]</button>
+            @click="closeBarcode">닫기</button>
         </div>
       </div>
     </div>
@@ -39,8 +38,7 @@
             class="text-center border border-dashed border-line p-[15px] w-[220px] break-inside-avoid">
             <h2 class="m-0 mb-2 text-heading whitespace-nowrap overflow-hidden text-ellipsis">{{ item.name }}</h2>
             <p class="m-0 mb-2 text-body font-bold">구역: {{ item.location_name || '미지정' }}</p>
-            <img :src="`https://barcode.tec-it.com/barcode.ashx?data=${item.sku}&code=Code128`" alt="Barcode"
-              class="max-w-full h-[60px] mx-auto" />
+            <Barcode :value="item.sku" :height="60" :module-width="1.5" />
             <p class="font-mono text-body mt-1 font-bold">{{ item.sku }}</p>
           </div>
         </div>
@@ -50,15 +48,17 @@
             @click="printBarcode">전체 일괄 인쇄</button>
           <button
             class="btn"
-            @click="closeBulkBarcode">[닫기]</button>
+            @click="closeBulkBarcode">닫기</button>
         </div>
       </div>
     </div>
 
+    <MoveStockModal v-if="moveItem" :item="moveItem" @moved="store.fetchItems()" @close="moveItem = null" />
+
     <!-- 이력 조회 모달 -->
     <div v-if="selectedHistoryItem"
       class="modal-overlay print:hidden">
-      <div class="modal w-[500px]">
+      <div class="modal w-[720px]">
         <div class="modal-header">[{{ selectedHistoryItem.sku }}] 이력 조회
         </div>
         <div class="h-[300px] overflow-y-auto p-0 bg-white">
@@ -66,27 +66,29 @@
             <thead>
               <tr>
                 <th
-                 
+
                   width="150">발생일시</th>
                 <th
-                 
+
                   width="100">구분</th>
-                <th
-                 >
-                  변동수량</th>
+                <th width="80">변동수량</th>
+                <th width="90">처리자</th>
+                <th>비고</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="itemHistoryLogs.length === 0">
-                <td colspan="3" class="text-center">기록이 없습니다.</td>
+                <td colspan="5" class="text-center">기록이 없습니다.</td>
               </tr>
               <tr v-for="log in itemHistoryLogs" :key="log.id">
-                <td class="text-center">{{ new Date(log.timestamp).toLocaleString('ko-KR') }}</td>
+                <td class="text-center">{{ formatDateTime(log.timestamp) }}</td>
                 <td class="text-center">{{ log.action_display }}</td>
                 <td class="text-right font-bold"
                   :class="log.quantity_changed > 0 ? 'text-primary' : 'text-danger'">
                   {{ log.quantity_changed > 0 ? '+' : '' }}{{ log.quantity_changed }}
                 </td>
+                <td class="text-center truncate">{{ log.user_name || '-' }}</td>
+                <td class="truncate" :title="log.description">{{ log.description || '' }}</td>
               </tr>
             </tbody>
           </table>
@@ -94,7 +96,7 @@
         <div class="modal-footer">
           <button
             class="btn"
-            @click="closeHistory">[닫기]</button>
+            @click="closeHistory">닫기</button>
         </div>
       </div>
     </div>
@@ -202,26 +204,26 @@
           <thead>
             <tr>
               <th
-               
+
                 width="30"><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th>
               <th
-               
+
                 width="120">상품코드</th>
               <th
                >
                 상품명</th>
               <th
-               
-                width="100">보관 구역</th>
+
+                width="140">보관 구역</th>
               <th
-               
+
                 width="80">현재 재고</th>
               <th
-               
+
                 width="120">재고 조정</th>
               <th
-               
-                width="240">관리 도구</th>
+
+                width="280">관리 도구</th>
             </tr>
           </thead>
           <tbody>
@@ -248,7 +250,8 @@
                 class="font-bold whitespace-nowrap overflow-hidden text-ellipsis">
                 {{ item.name }}</td>
               <td v-if="editingId !== item.id" class="text-center">{{
-                item.location_name || '-' }}</td>
+                item.location_name || '-' }}
+                <span v-if="item.stocks.length > 1 || item.unassigned" class="block text-caption text-muted truncate" :title="stockSummary(item)">{{ stockSummary(item) }}</span></td>
               <td class="text-right font-bold"
                 :class="{ 'text-danger': item.quantity === 0 }">
                 {{ item.quantity.toLocaleString() }}
@@ -264,19 +267,14 @@
                   @click="handleUpdateQuantity(item, -1)" :disabled="item.quantity === 0">출고</button>
                 </template>
               </td>
-              <td class="text-center">
-                <button
-                  class="btn btn-link"
-                  @click="startEdit(item)">[수정]</button>
-                <button
-                  class="btn btn-link"
-                  @click="openBarcode(item)">[인쇄]</button>
-                <button
-                  class="btn btn-link"
-                  @click="openHistory(item)">[이력]</button>
-                <button
-                  class="btn btn-link"
-                  @click="handleDeleteItem(item.id)">[삭제]</button>
+              <td>
+                <div class="flex justify-center gap-1">
+                  <button class="btn btn-sm" @click="startEdit(item)">수정</button>
+                  <button class="btn btn-sm" @click="openBarcode(item)">인쇄</button>
+                  <button class="btn btn-sm" @click="openHistory(item)">이력</button>
+                  <button class="btn btn-sm" @click="moveItem = item">이동</button>
+                  <button class="btn btn-sm btn-danger" @click="handleDeleteItem(item.id)">삭제</button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -300,13 +298,17 @@
 import { ref, computed, onActivated, watch, nextTick } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
 import { useToastStore } from '../stores/toastStore';
-import axios from 'axios';
-import { downloadCsv } from '../utils/csv';
+import { downloadXlsx } from '../utils/excel';
 import { apiErrorMessage } from '../utils/apiError';
+import { formatDateTime } from '../utils/date';
 import { playBeep } from '../utils/beep';
+import Barcode from '../components/Barcode.vue';
+import MoveStockModal from '../components/MoveStockModal.vue';
+import { useDialogStore } from '../stores/dialogStore';
 
 const store = useInventoryStore();
 const toast = useToastStore();
+const dialog = useDialogStore();
 
 const searchQuery = ref('');
 const selectedLocation = ref('전체');
@@ -323,7 +325,6 @@ const itemsPerPage = ref(30);
 const editingId = ref(null); const editForm = ref({ name: '', location: '' });
 const startEdit = (item) => { editingId.value = item.id; editForm.value = { name: item.name, location: item.location }; };
 const saveEdit = async (id) => { if (!editForm.value.name) return; await store.updateItemDetails(id, editForm.value.name, editForm.value.location); editingId.value = null; };
-const cancelEdit = () => { editingId.value = null; };
 
 const selectedBarcodeItem = ref(null); const openBarcode = (item) => { selectedBarcodeItem.value = item; };
 const closeBarcode = () => { selectedBarcodeItem.value = null; }; const printBarcode = () => { window.print(); };
@@ -340,6 +341,9 @@ const closeBulkBarcode = () => {
 };
 
 const selectedHistoryItem = ref(null); const itemHistoryLogs = ref([]);
+const moveItem = ref(null);
+// 여러 위치에 나뉜 재고 요약: "A-R01-1단 10 · B-R02-2단 5 · 미지정 3"
+const stockSummary = (item) => [...item.stocks.map(s => `${s.location_name} ${s.quantity}`), ...(item.unassigned ? [`미지정 ${item.unassigned}`] : [])].join(' · ');
 const openHistory = async (item) => {
   selectedHistoryItem.value = item; itemHistoryLogs.value = [];
   const data = await store.fetchLogs({ item: item.id, page_size: 200 });
@@ -374,17 +378,18 @@ const toggleSelectAll = (event) => {
 };
 
 const handleBatchMove = async () => {
-  const codes = store.locations.map(loc => loc.full_code).join(', ');
-  const newLocation = prompt(`이동할 구역 코드를 입력하세요.\n(${codes || '등록된 구역 없음'})`); if (newLocation === null) return;
-  const target = store.locations.find(loc => loc.full_code === newLocation.trim());
-  if (!target) return toast.addToast('등록되지 않은 구역 코드입니다.', 'error');
+  if (store.locations.length === 0) return toast.addToast('등록된 보관 위치가 없습니다. 기본 설정 → 보관 위치에서 먼저 등록하세요.', 'error');
+  const targetId = await dialog.select(`선택한 ${selectedIds.value.length}건을 옮길 보관 위치를 고르세요.`, {
+    title: '일괄 구역이동', okText: '이동', options: store.locations.map(loc => ({ value: loc.id, label: loc.full_code })) });
+  if (targetId === null) return;
+  const target = store.locations.find(loc => loc.id === targetId);
   try {
     await Promise.all(selectedIds.value.map(id => { const targetItem = store.items.find(item => item.id === id); return store.updateItemDetails(id, targetItem.name, target.id); }));
     selectedIds.value = []; toast.addToast('이동 완료', 'success');
-  } catch (e) { toast.addToast('이동 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); }
+  } catch { toast.addToast('이동 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); }
 };
 const handleBatchDelete = async () => {
-  if (!confirm(`선택한 ${selectedIds.value.length}건을 삭제하시겠습니까?`)) return;
+  if (!(await dialog.confirm(`선택한 ${selectedIds.value.length}건을 삭제하시겠습니까?`, { danger: true, okText: '삭제' }))) return;
   try {
     await Promise.all(selectedIds.value.map(id => store.deleteItem(id))); selectedIds.value = []; toast.addToast('삭제 완료', 'success');
   } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); await store.fetchItems(); }
@@ -393,9 +398,9 @@ const handleBatchDelete = async () => {
 
 const downloadInventoryCSV = () => {
   if (filteredItems.value.length === 0) return toast.addToast('데이터 없음', 'error');
-  const headers = ['SKU', '상품명', '보관구역', '재고수량'];
-  const rows = filteredItems.value.map(item => [item.sku, item.name, item.location_name || '', item.quantity]);
-  downloadCsv('재고현황.csv', headers, rows);
+  const headers = ['상품코드', '상품명', '보관 위치', '현재 재고', '안전 재고'];
+  const rows = filteredItems.value.map(item => [item.sku, item.name, item.location_name || '', item.quantity, item.safety_stock]);
+  downloadXlsx(`재고현황_${new Date().toLocaleDateString('sv-SE')}`, '재고현황', headers, rows);
 };
 
 const focusSerialInput = async () => { if (scanSku.value) { await nextTick(); serialInputRef.value?.focus(); serialInputRef.value?.select(); } };
@@ -408,7 +413,7 @@ const handleScan = async () => {
 };
 
 const handleUpdateQuantity = async (item, change) => { try { await store.adjustStock(item.id, change); } catch (e) { toast.addToast(e.response?.data?.error || '재고 변경 중 오류가 발생했습니다.', 'error'); await store.fetchItems(); } };
-const handleDeleteItem = async (id) => { if (!confirm('삭제하시겠습니까?')) return; try { await store.deleteItem(id); toast.addToast('삭제됨', 'success'); } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); } };
+const handleDeleteItem = async (id) => { if (!(await dialog.confirm('이 상품을 삭제하시겠습니까?', { danger: true, okText: '삭제' }))) return; try { await store.deleteItem(id); toast.addToast('삭제됨', 'success'); } catch (e) { toast.addToast(apiErrorMessage(e, '삭제 중 오류가 발생했습니다.'), 'error', 5000); } };
 onActivated(() => { store.fetchItems(); store.fetchLocations(); });
 </script>
 

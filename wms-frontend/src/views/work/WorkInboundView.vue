@@ -13,21 +13,36 @@
 
     <!-- 스캔 작업 -->
     <div v-else class="grid grid-cols-[2fr_1fr] gap-6 h-full">
-      <section class="flex flex-col gap-5 min-h-0">
+      <section v-if="isComplete" class="work-task justify-center items-center gap-8">
+        <div class="text-[64px] font-bold text-success">✔ 모든 품목 입고 완료</div>
+        <div class="text-3xl text-muted">잘못 스캔한 품목은 오른쪽의 [입고 취소]로 되돌릴 수 있습니다.</div>
+        <button ref="doneRef" class="work-btn work-btn-success w-full h-32! text-5xl!" @click="leave">발주서 목록으로 (Enter)</button>
+      </section>
+
+      <section v-else class="flex flex-col gap-5 min-h-0">
         <div v-if="activeLine" class="work-task">
           <div class="text-[56px] font-bold leading-tight">{{ activeLine.item_name }}</div>
           <div class="text-4xl font-mono">{{ activeLine.item_sku }}</div>
           <div class="text-[80px] font-bold leading-tight">
             <span class="text-primary">{{ activeLine.received_quantity }}</span> / {{ activeLine.order_quantity }}개
+            <span v-if="activeLine.closed_quantity" class="text-3xl text-warning align-middle">(검수 차이로 {{ activeLine.closed_quantity }}개 마감)</span>
           </div>
-          <div class="text-[44px] font-bold text-warning">📍 {{ activeLine.location_name || '위치 미지정' }}에 보관</div>
+          <div class="text-[44px] font-bold text-warning">📍 {{ putaway[activeLine.id]?.full_code || activeLine.location_name || '위치 미지정' }}에 보관
+            <span v-if="putaway[activeLine.id]" class="text-primary text-3xl">(기본 위치 대신)</span>
+            <span v-if="location.isVerified(activeLine)" class="text-success text-4xl">✔ 위치 확인</span>
+          </div>
+          <div v-if="!location.isVerified(activeLine)" class="text-2xl text-muted">다른 선반에 넣으려면 그 선반의 위치 라벨을 스캔하세요.</div>
         </div>
         <div v-else class="work-task justify-center items-center flex-1 text-[56px] font-bold text-muted">
           상품 바코드를 스캔하세요
+          <span v-if="pendingPlace" class="text-4xl text-primary mt-4">📍 다음 상품은 {{ pendingPlace.full_code }}에 넣습니다</span>
         </div>
         <div class="text-4xl font-bold text-center">{{ prompt }}</div>
-        <ScanBox :paused="!!qtyLine" @scan="onScan" />
-        <button v-if="activeLine && !activeLine.serial_tracked && !isDone(activeLine)" class="work-btn" @click="qtyLine = activeLine">수량 직접 입력</button>
+        <ScanBox :paused="!!qtyLine || !!cancelLine || !!issueLine" @scan="onScan" />
+        <div v-if="activeLine" class="grid grid-cols-2 gap-4">
+          <button v-if="!activeLine.serial_tracked && !isDone(activeLine)" class="work-btn" @click="qtyLine = activeLine">수량 직접 입력</button>
+          <button class="work-btn" :class="{ 'col-span-2': activeLine.serial_tracked || isDone(activeLine) }" @click="issueLine = activeLine">검수 차이 (덜 옴 · 파손 · 더 옴)</button>
+        </div>
       </section>
 
       <aside class="flex flex-col gap-3 min-h-0 overflow-y-auto">
@@ -35,35 +50,53 @@
         <div v-for="line in po.items" :key="line.id" class="work-line" :class="{ 'is-done': isDone(line), 'is-current': line.item_sku === contextSku }">
           <div class="flex justify-between gap-3 font-bold">
             <span class="truncate">{{ isDone(line) ? '✔ ' : '' }}{{ line.item_name }}</span>
-            <span class="shrink-0">{{ line.received_quantity }}/{{ line.order_quantity }}</span>
+            <span class="shrink-0">{{ line.received_quantity }}/{{ line.order_quantity }}<span v-if="line.closed_quantity" class="text-warning"> (차이 {{ line.closed_quantity }})</span></span>
           </div>
-          <div class="mt-1 text-xl text-muted">{{ line.serial_tracked ? '시리얼 스캔' : '수량 입고' }}</div>
+          <div class="flex justify-between items-center mt-1 text-xl text-muted">
+            <span>{{ line.serial_tracked ? '시리얼 스캔' : '수량 입고' }}</span>
+            <button v-if="line.received_quantity > 0" class="work-link" @click="cancelLine = line">입고 취소</button>
+          </div>
         </div>
         <button class="work-btn mt-auto" @click="leave">발주서 목록으로</button>
       </aside>
     </div>
 
-    <QuantityDialog v-if="qtyLine" :name="qtyLine.item_name" :remaining="qtyLine.order_quantity - qtyLine.received_quantity"
+    <QuantityDialog v-if="qtyLine" :name="qtyLine.item_name" :remaining="qtyLine.remaining"
       @confirm="enterQuantity" @close="qtyLine = null" />
+
+    <!-- 입고 취소: 시리얼 관리 품목은 취소할 시리얼을 스캔하고, 그 외는 수량을 입력합니다. -->
+    <SerialDialog v-if="cancelLine?.serial_tracked" :name="cancelLine.item_name" message="입고를 취소할 기기의 시리얼을 스캔하세요"
+      @confirm="cancelSerial" @close="cancelLine = null" />
+    <QuantityDialog v-else-if="cancelLine" :name="`${cancelLine.item_name} 입고 취소`" label="입고된 수량"
+      :remaining="cancelLine.received_quantity" @confirm="cancelQuantity" @close="cancelLine = null" />
+    <ReceiptIssueDialog v-if="issueLine" :line="issueLine" @confirm="reportIssue" @close="issueLine = null" />
   </WorkLayout>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import WorkLayout from '../../components/work/WorkLayout.vue'
 import ScanBox from '../../components/work/ScanBox.vue'
 import QuantityDialog from '../../components/work/QuantityDialog.vue'
+import SerialDialog from '../../components/work/SerialDialog.vue'
+import ReceiptIssueDialog from '../../components/work/ReceiptIssueDialog.vue'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
+import { isLocationCode, useLocationCheck } from '../../composables/useLocationCheck'
 import { apiErrorMessage } from '../../utils/apiError'
 
 const { ok, fail } = useWorkFeedback()
+const location = useLocationCheck()
 const poList = ref([])
 const po = ref(null)
 const contextSku = ref('')
 const qtyLine = ref(null)
+const cancelLine = ref(null)
+const issueLine = ref(null)
+const doneRef = ref(null)
 
-const isDone = (line) => line.received_quantity >= line.order_quantity
+const isDone = (line) => line.remaining <= 0  // 받은 수량 + 검수 차이로 마감한 수량
+const isComplete = computed(() => po.value?.status === '입고완료')
 const activeLine = computed(() => po.value?.items.find(line => line.item_sku === contextSku.value))
 const prompt = computed(() => {
   const line = activeLine.value
@@ -72,24 +105,91 @@ const prompt = computed(() => {
 })
 
 const load = async () => {
-  const res = await axios.get('/api/inventory/purchase-orders/')
+  // 입고할 발주서만 받습니다. (끝난 발주서는 계속 쌓이므로)
+  const res = await axios.get('/api/inventory/purchase-orders/', { params: { status: '발주대기,입고중' } })
   poList.value = res.data.filter(row => row.status === '발주대기' || row.status === '입고중').reverse()
 }
 
+// 넣을 위치: 선반 라벨을 먼저 스캔하면 다음에 스캔하는 상품을, 상품 다음에 스캔하면 지금 상품을 그 위치에 넣습니다.
+const locations = ref([])
+const putaway = ref({})       // { 품목 줄 id: 위치 } (기본 위치가 아닐 때만)
+const pendingPlace = ref(null) // 다음에 스캔할 상품에 쓸 위치
+
+const placeLine = (line, target) => {
+  if (!target || target.barcode === line.location_barcode) delete putaway.value[line.id]
+  else putaway.value[line.id] = target
+}
+
+const loadLocations = async () => {
+  locations.value = (await axios.get('/api/inventory/locations/')).data.filter(loc => loc.is_active)
+}
+
+const scanLocation = async (code) => {
+  // 화면을 연 직후라 위치 목록이 아직 없으면 지금 불러옵니다.
+  if (!locations.value.some(loc => loc.barcode === code)) await loadLocations()
+  const target = locations.value.find(loc => loc.barcode === code)
+  if (!target) return fail(`[${code}] 등록되지 않은 위치 라벨입니다.`)
+  pendingPlace.value = target
+  const line = activeLine.value
+  if (!line) return ok(`다음에 스캔하는 상품을 ${target.full_code}에 넣습니다`)
+  placeLine(line, target)
+  location.check(target.barcode, line, '에 보관합니다', [{ barcode: target.barcode, location_name: target.full_code }])
+}
+
 const receive = async (body) => {
+  const target = putaway.value[activeLine.value?.id]
+  if (target) body = { ...body, location: target.id }
   try {
     const res = await axios.post(`/api/inventory/purchase-orders/${po.value.id}/receive_inbound/`, body)
     po.value = res.data.po
     ok(res.data.message)
-    if (po.value.status === '입고완료') await leave()
   } catch (err) {
     fail(apiErrorMessage(err, '입고 처리 중 오류가 발생했습니다.'))
   }
 }
 
+const cancelReceipt = async (body) => {
+  cancelLine.value = null
+  try {
+    const res = await axios.post(`/api/inventory/purchase-orders/${po.value.id}/cancel_receipt/`, body)
+    po.value = res.data.po
+    ok(res.data.message)
+  } catch (err) {
+    fail(apiErrorMessage(err, '입고 취소 중 오류가 발생했습니다.'))
+  }
+}
+// 검수 차이 기록 (덜 옴·파손은 그만큼 이 줄을 마감)
+const reportIssue = async (body) => {
+  const line = issueLine.value
+  issueLine.value = null
+  try {
+    const res = await axios.post(`/api/inventory/purchase-orders/${po.value.id}/report_issue/`, { sku: line.item_sku, ...body })
+    po.value = res.data.po
+    ok(res.data.message)
+  } catch (err) {
+    fail(apiErrorMessage(err, '검수 차이를 기록하지 못했습니다.'))
+  }
+}
+
+const cancelSerial = (code) => cancelReceipt({ sku: cancelLine.value.item_sku, serial_number: code })
+const cancelQuantity = (quantity) => cancelReceipt({ sku: cancelLine.value.item_sku, quantity })
+
+// 전 품목을 받으면 바로 나가지 않고, 잘못 스캔한 것을 되돌릴 기회를 줍니다.
+watch(isComplete, async (done) => {
+  if (done) {
+    await nextTick()
+    doneRef.value?.focus()
+  }
+})
+
 const onScan = async (code) => {
+  if (isLocationCode(code)) return scanLocation(code)
   const line = po.value.items.find(row => row.item_sku === code)
   if (line) {
+    if (pendingPlace.value) {
+      placeLine(line, pendingPlace.value)
+      pendingPlace.value = null
+    }
     contextSku.value = code
     if (line.serial_tracked) ok(`${line.item_name}: 시리얼을 스캔하세요`)
     else await receive({ sku: code, quantity: 1 })
@@ -111,9 +211,12 @@ const enterQuantity = async (quantity) => {
 
 const leave = async () => {
   po.value = null
+  location.reset()
+  putaway.value = {}
+  pendingPlace.value = null
   contextSku.value = ''
   await load()
 }
 
-onMounted(load)
+onMounted(() => Promise.all([load(), loadLocations()]))
 </script>

@@ -1,32 +1,33 @@
 <template>
-  <div class="flex flex-col gap-3 w-full h-full box-border">
-    <!-- 상단 요약 지표 카드 (KPI Banner) -->
-    <div class="panel">
-      <table class="w-full border-collapse text-title">
-        <tbody>
-          <tr>
-            <th class="border border-line p-2 text-center font-bold text-white bg-primary w-[15%]">총 등록 상품 (SKU)
-            </th>
-            <td class="border border-line px-3 py-2 text-right w-[10%] font-bold">{{ totalSkuCount.toLocaleString() }}
-              건</td>
-            <th class="border border-line p-2 text-center font-bold text-white bg-primary w-[15%]">창고 내 총 재고</th>
-            <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-primary">{{
-              totalQuantity.toLocaleString() }} 개</td>
-            <th class="border border-line p-2 text-center font-bold text-white bg-danger-dark w-[15%]">재고 부족 (주의필요)</th>
-            <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-danger">{{
-              lowStockCount.toLocaleString() }} SKU</td>
-            <th class="border border-line p-2 text-center font-bold text-white bg-warning w-[15%]">금일 트랜잭션</th>
-            <td class="border border-line px-3 py-2 text-right w-[10%] font-bold text-warning">{{
-              todayCount.toLocaleString() }} 건</td>
-          </tr>
-        </tbody>
-      </table>
+  <div class="page overflow-y-auto">
+    <!-- 상단 요약 지표: 다른 화면(일일 마감·분석)과 같은 카드 모양 -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 shrink-0">
+      <div class="today-card cursor-default py-3">
+        <span class="text-heading font-bold">총 등록 상품</span>
+        <span class="text-[28px] font-bold leading-none my-1.5">{{ totalSkuCount.toLocaleString() }}</span>
+        <span class="text-muted">SKU</span>
+      </div>
+      <div class="today-card cursor-default py-3">
+        <span class="text-heading font-bold">창고 내 총 재고</span>
+        <span class="text-[28px] font-bold leading-none my-1.5 text-primary">{{ totalQuantity.toLocaleString() }}</span>
+        <span class="text-muted">개</span>
+      </div>
+      <div class="today-card cursor-default py-3">
+        <span class="text-heading font-bold">재고 부족</span>
+        <span class="text-[28px] font-bold leading-none my-1.5" :class="lowStockCount ? 'text-danger' : 'text-muted'">{{ lowStockCount.toLocaleString() }}</span>
+        <span class="text-muted">SKU (안전 재고 이하)</span>
+      </div>
+      <div class="today-card cursor-default py-3">
+        <span class="text-heading font-bold">오늘 입출고</span>
+        <span class="text-[28px] font-bold leading-none my-1.5 text-warning">{{ todayCount.toLocaleString() }}</span>
+        <span class="text-muted">건</span>
+      </div>
     </div>
 
     <!-- 장기 체화 재고 및 품절 경고 박스 -->
     <div v-if="lowStockItems.length > 0"
-      class="border border-danger bg-danger-soft p-2 text-ink shadow-[2px_2px_0px_rgba(0,0,0,0.05)]">
-      <div class="font-bold text-danger mb-1 text-body">※ [경고] 장기 체화 및 재고 부족 상품 (안전 재고 이하) - 긴급 발주 및 조달 확인 필요</div>
+      class="shrink-0 border border-danger bg-danger-soft p-2 text-ink shadow-[2px_2px_0px_rgba(0,0,0,0.05)]">
+      <div class="font-bold text-danger mb-1 text-body">※ 재고 부족 상품 (안전 재고 이하) - 발주가 필요한지 확인하세요</div>
       <div class="flex flex-wrap gap-1">
         <span v-for="item in lowStockItems" :key="item.id"
           class="bg-white border border-[#ffcdd2] px-1.5 py-0.5 text-caption">
@@ -37,20 +38,18 @@
     </div>
 
     <!-- 대시보드 시각화 차트 영역 -->
-    <div class="flex gap-3 h-[240px]">
+    <div class="flex gap-2.5 h-[260px] shrink-0">
       <div class="panel flex-1">
-        <div class="panel-header panel-title">최근 30일 입출고 추이
-          (API 연동)</div>
-        <div class="p-2.5 h-full relative box-border overflow-hidden">
+        <div class="panel-header panel-title">최근 30일 입출고 추이</div>
+        <div class="p-2.5 flex-1 min-h-0 relative box-border overflow-hidden">
           <Bar v-if="isChartDataLoaded" :data="trendChartData" :options="chartOptions" />
           <div v-else class="text-center pt-[50px]">차트 데이터 로딩 중...</div>
         </div>
       </div>
 
       <div class="panel flex-1">
-        <div class="panel-header panel-title">창고 구역(Zone)별 재고
-          점유율</div>
-        <div class="p-2.5 h-full relative box-border overflow-hidden">
+        <div class="panel-header panel-title">구역별 재고 비율</div>
+        <div class="p-2.5 flex-1 min-h-0 relative box-border overflow-hidden">
           <Doughnut v-if="isChartDataLoaded" :data="occupancyChartData" :options="chartOptions" />
           <div v-else class="text-center pt-[50px]">차트 데이터 로딩 중...</div>
         </div>
@@ -58,23 +57,22 @@
     </div>
 
     <!-- 중간 분석 그리드 영역 -->
-    <div class="flex gap-3">
+    <div class="flex gap-2.5 shrink-0">
       <div class="panel flex-1">
-        <div class="panel-header panel-title">보관 구역별 재고 점유 현황
-          (상세)</div>
-        <div class="p-2 overflow-auto h-[160px]">
+        <div class="panel-header panel-title">보관 위치별 재고</div>
+        <div class="p-2 overflow-auto h-[196px]">
           <table class="data-table data-table-sm">
             <thead>
               <tr>
                 <th
-                 
-                  width="35%">보관 구역</th>
+
+                  width="35%">보관 위치</th>
                 <th
-                 
+
                   width="35%">재고 수량</th>
                 <th
-                 
-                  width="30%">점유율(%)</th>
+
+                  width="30%">비율(%)</th>
               </tr>
             </thead>
             <tbody>
@@ -93,23 +91,22 @@
       </div>
 
       <div class="panel flex-1">
-        <div class="panel-header panel-title">입출고 활성도 TOP 5
-          (실시간 트렌드 기준)</div>
-        <div class="p-2 overflow-auto h-[160px]">
+        <div class="panel-header panel-title">입출고가 많은 상품 TOP 5 (최근 30일)</div>
+        <div class="p-2 overflow-auto h-[196px]">
           <table class="data-table data-table-sm">
             <thead>
               <tr>
                 <th
-                 
+
                   width="15%">순위</th>
                 <th
-                 
+
                   width="30%">상품코드</th>
                 <th
                  >
                   상품명</th>
                 <th
-                 
+
                   width="20%">변동 횟수</th>
               </tr>
             </thead>
@@ -131,10 +128,10 @@
     </div>
 
     <!-- 하단 전체 상세 내역 및 검색/엑셀 다운로드 -->
-    <div class="panel flex-1 min-h-0">
+    <div class="panel min-h-[320px]">
       <div
         class="panel-header">
-        <span class="panel-title">실시간 입출고 상세 로그 및 트렌드 분석 </span>
+        <span class="panel-title">입출고 상세 기록</span>
         <div class="flex items-center">
             <span class="mr-2">총 <strong>{{ logTotal.toLocaleString() }}</strong>건 ({{ logPage }}/{{ logPageCount }})</span>
             <button class="btn btn-sm mr-0.5" :disabled="logPage <= 1" @click="logPage--">이전</button>
@@ -153,34 +150,34 @@
             다운로드</button>
         </div>
       </div>
-      <div class="p-0 flex-1 overflow-y-auto h-[220px]">
+      <div class="p-0 flex-1 overflow-y-auto">
         <table class="data-table data-table-sm">
           <thead>
             <tr>
               <th
-               
-                width="180">발생 일시</th>
+
+                width="140">발생 일시</th>
               <th
-               
+
                 width="100">구분</th>
               <th
-               
+
                 width="150">상품코드</th>
               <th
                >
                 상품명</th>
               <th
-               
+
                 width="120">변동 수량</th>
+              <th width="110">처리자</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="logRows.length === 0">
-              <td colspan="5" class="text-center">조회된 입출고 내역이 없습니다.</td>
+              <td colspan="6" class="text-center">조회된 입출고 내역이 없습니다.</td>
             </tr>
             <tr v-for="log in logRows" :key="log.id">
-              <td class="text-center">{{ new
-                Date(log.timestamp).toLocaleString('ko-KR') }}</td>
+              <td class="text-center">{{ formatDateTime(log.timestamp) }}</td>
               <td class="text-center font-bold"
                 :class="log.action === 'IN' ? 'text-success' : (log.action === 'OUT' ? 'text-primary' : 'text-warning')">
                 {{ log.action_display || log.action }}
@@ -191,6 +188,7 @@
                 :class="log.quantity_changed > 0 ? 'text-primary' : 'text-danger'">
                 {{ log.quantity_changed > 0 ? '+' : '' }}{{ log.quantity_changed }}
               </td>
+              <td class="text-center truncate">{{ log.user_name || '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -203,6 +201,8 @@
 // [기존 코드에서 단 1글자도 변경되지 않았습니다]
 import { ref, computed, onActivated, watch } from 'vue';
 import { useInventoryStore } from '../stores/inventory';
+import { useToastStore } from '../stores/toastStore';
+import { formatDateTime } from '../utils/date';
 import axios from 'axios';
 import { Bar, Doughnut } from 'vue-chartjs';
 import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement } from 'chart.js';
@@ -210,6 +210,7 @@ import { Chart as ChartJS, Title, Tooltip, Legend, BarElement, CategoryScale, Li
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ArcElement);
 
 const store = useInventoryStore();
+const toast = useToastStore();
 const logFilter = ref('ALL');
 const logSearch = ref('');
 
@@ -223,9 +224,10 @@ const topMovingItems = ref([]);
 
 const locationStats = computed(() => {
   const stats = {};
+  // 위치별 재고로 셉니다. 위치에 기록되지 않은 수량은 '미지정'입니다.
   store.items.forEach(i => {
-    const loc = i.location_name || '미지정';
-    stats[loc] = (stats[loc] || 0) + i.quantity;
+    i.stocks.forEach(s => { stats[s.location_name] = (stats[s.location_name] || 0) + s.quantity; });
+    if (i.unassigned) stats['미지정'] = (stats['미지정'] || 0) + i.unassigned;
   });
   return Object.keys(stats).map(name => ({
     name,
@@ -266,7 +268,10 @@ watch([logFilter, logSearch], () => {
   }, 300);
 });
 
-const downloadCSV = () => store.downloadLogs(logParams());
+const downloadCSV = async () => {
+  const { saved, total } = await store.downloadLogs(logParams());
+  if (saved < total) toast.addToast(`기록이 많아 최근 ${saved.toLocaleString()}건만 저장했습니다. 기간이나 검색어로 줄여 주세요.`, 'info', 6000);
+};
 
 const isChartDataLoaded = ref(false);
 const trendChartData = ref({ labels: [], datasets: [] });

@@ -1,0 +1,10 @@
+# 파이썬 린트(ruff). verify.sh와 pre-commit이 이 설정을 씁니다.
+# 오류를 막는 기본 규칙만 검사하고, 서식(ruff format)은 pre-commit으로 커밋하는 파일에만 적용합니다.
+line-length = 160
+extend-exclude = ["inventory/migrations", "myenv", "wms-frontend", "db_backups", "logs", "staticfiles"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[format]
+quote-style = "single"

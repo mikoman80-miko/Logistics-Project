@@ -12,3 +12,23 @@ db_backups/
 # 파이썬 캐시
 __pycache__/
 *.pyc
+
+# 가상 택배사 데이터
+mock_carrier/carrier.sqlite3
+
+# 화면 자동 테스트 결과
+wms-frontend/e2e/results/
+wms-frontend/e2e/screens/
+mock_carrier/carrier_e2e.sqlite3
+
+# 운영 모드 정적 파일 (collectstatic)
+staticfiles/
+
+# 서버 로그
+logs/
+
+# 편집기 작업공간 파일
+*.code-workspace
+
+# 로그인 횟수 제한 기록
+cache/

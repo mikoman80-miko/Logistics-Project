@@ -11,12 +11,60 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+    <div class="grid grid-cols-3 lg:grid-cols-5 gap-2.5">
       <button v-for="card in cards" :key="card.title" class="today-card" @click="router.push(card.path)">
         <span class="text-heading font-bold">{{ card.title }}</span>
-        <span class="text-[40px] font-bold leading-none my-2" :class="card.count() > 0 ? card.color : 'text-muted'">{{ card.count() }}</span>
-        <span class="text-muted">{{ card.hint }}</span>
+        <span class="text-[40px] font-bold leading-none my-2" :class="card.count() > 0 ? (card.alert?.() ? 'text-danger' : card.color) : 'text-muted'">{{ card.count() }}</span>
+        <span :class="card.alert?.() ? 'text-danger font-bold' : 'text-muted'">{{ typeof card.hint === 'function' ? card.hint() : card.hint }}</span>
       </button>
+    </div>
+
+    <div v-if="today.overdue_purchase_orders.count > 0" class="panel">
+      <div class="panel-header">
+        <span class="panel-title text-warning">입고 예정일이 지난 발주 {{ today.overdue_purchase_orders.count }}건</span>
+        <span class="text-muted">거래처에 입고 일정을 확인하세요</span>
+      </div>
+      <div class="panel-body-flush">
+        <table class="data-table">
+          <thead>
+            <tr><th width="180">발주번호</th><th>거래처</th><th width="130">입고 예정일</th><th width="110">지연</th><th width="100">상태</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="po in today.overdue_purchase_orders.items" :key="po.id" class="is-clickable" @click="router.push({ path: '/purchase-order', query: { q: po.po_number } })">
+              <td class="text-center font-bold text-primary">{{ po.po_number }}</td>
+              <td class="truncate">{{ po.supplier || '미지정' }}</td>
+              <td class="text-center">{{ po.expected_date }}</td>
+              <td class="text-center font-bold text-warning">{{ po.days }}일 지남</td>
+              <td class="text-center">{{ po.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="today.carrier_issues.count > 0" class="panel">
+      <div class="panel-header">
+        <span class="panel-title text-danger">택배 확인 필요 {{ today.carrier_issues.count }}건</span>
+        <span class="text-muted">운송장 발급·회수 요청 실패, 출고 후 하루 넘게 배송완료가 안 된 건</span>
+      </div>
+      <div class="panel-body-flush">
+        <table class="data-table">
+          <thead>
+            <tr><th width="70">구분</th><th width="180">번호</th><th width="180">고객</th><th>확인할 내용</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="issue in today.carrier_issues.items" :key="issue.kind + issue.number" class="is-clickable" @click="openIssue(issue)">
+              <td class="text-center">{{ issue.kind === 'order' ? '주문' : '반품' }}</td>
+              <td class="text-center font-bold text-primary">{{ issue.number }}</td>
+              <td class="truncate">{{ issue.customer }}</td>
+              <td class="truncate text-danger" :title="issue.reason">{{ issue.reason }}</td>
+            </tr>
+            <tr v-if="today.carrier_issues.count > today.carrier_issues.items.length" class="empty-row">
+              <td colspan="4">외 {{ today.carrier_issues.count - today.carrier_issues.items.length }}건은 주문·반품 관리에서 확인하세요.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="panel">
@@ -44,13 +92,19 @@ import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const router = useRouter()
-const today = ref({ orders: 0, purchase_orders: 0, returns: 0, low_stock: 0, setup: { locations: true, items: true, suppliers: true } })
+const today = ref({ cycle_count: { todo: 0, done: 0 }, orders: 0, orders_due: { overdue: 0, today: 0, later: 0, urgent: 0, cutoff: '' }, purchase_orders: 0, returns: 0, low_stock: 0, carrier_issues: { count: 0, items: [] }, overdue_purchase_orders: { count: 0, items: [] }, setup: { locations: true, items: true, suppliers: true } })
 
 const cards = [
-  { title: '출고 대기', count: () => today.value.orders, hint: '스캔 후 출고할 주문', path: '/orders', color: 'text-primary' },
+  { title: '출고 대기', count: () => today.value.orders, path: '/orders', color: 'text-primary', alert: () => today.value.orders_due.overdue > 0,
+    hint: () => {
+      const due = today.value.orders_due
+      if (!today.value.orders) return '스캔 후 출고할 주문'
+      return [due.overdue && `마감 지남 ${due.overdue}`, `오늘 ${due.cutoff} 마감 ${due.today}`, due.urgent && `긴급 ${due.urgent}`].filter(Boolean).join(' · ')
+    } },
   { title: '입고 예정', count: () => today.value.purchase_orders, hint: '아직 다 받지 못한 발주', path: '/purchase-order', color: 'text-primary' },
   { title: '반품 회수 대기', count: () => today.value.returns, hint: '돌아올 기기', path: '/returns', color: 'text-warning' },
-  { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품', path: '/stock', color: 'text-danger' },
+  { title: '순환 재고 조사', count: () => today.value.cycle_count.todo, hint: () => `오늘 조사할 위치 · ${today.value.cycle_count.done}곳 완료`, path: '/audit', color: 'text-warning' },
+  { title: '재고 부족', count: () => today.value.low_stock, hint: '안전 재고 이하 상품 · 누르면 발주 제안', path: '/purchase-order?suggest=1', color: 'text-danger' },
 ]
 
 const setupSteps = computed(() => [
@@ -64,6 +118,9 @@ const flows = [
   { title: '출고', steps: ['관리자가 주문을 등록합니다.', '현장 화면의 안내대로 스캔합니다.', '출고 완료를 누르면 재고가 줄어듭니다.'], path: '/orders', action: '주문 관리로 이동' },
   { title: '반품', steps: ['관리자가 반품을 등록합니다.', '현장 화면에서 시리얼을 스캔합니다.', '기기 상태를 고르면 처리됩니다.'], path: '/returns', action: '반품 관리로 이동' },
 ]
+
+// 해당 주문·반품 화면에서 그 건을 찾아 엽니다.
+const openIssue = (issue) => router.push({ path: issue.kind === 'order' ? '/orders' : '/returns', query: { q: issue.number } })
 
 onActivated(async () => {
   today.value = (await axios.get('/api/inventory/today/')).data

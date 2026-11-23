@@ -8,6 +8,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useWorkFeedback } from '../../composables/useWorkFeedback'
+import { useDialogStore } from '../../stores/dialogStore'
 
 const props = defineProps({
   placeholder: { type: String, default: '스캔 대기 중...' },
@@ -18,7 +19,9 @@ const emit = defineEmits(['scan'])
 const { feedback, fail } = useWorkFeedback()
 const inputRef = ref(null)
 const value = ref('')
-const locked = computed(() => props.paused || feedback.value?.type === 'error')
+const dialog = useDialogStore()
+// 오류 화면이나 확인 팝업이 떠 있으면 스캔을 받지 않고, 커서도 가져오지 않습니다.
+const locked = computed(() => props.paused || feedback.value?.type === 'error' || !!dialog.current || dialog.blockers > 0)
 
 const focus = () => { if (!locked.value) inputRef.value?.focus() }
 

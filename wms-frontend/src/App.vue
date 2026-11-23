@@ -2,7 +2,10 @@
   <template v-if="!authStore.isAuthenticated || route.meta.work"><router-view /></template>
 
   <div v-else class="flex w-screen h-screen overflow-hidden bg-surface-app text-ink text-body font-sans">
-    <aside class="hidden md:flex w-[230px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden">
+    <!-- 좁은 화면에서는 메뉴 버튼으로 여닫습니다. -->
+    <div v-if="menuOpen" class="md:hidden fixed inset-0 z-[1090] bg-black/40" @click="menuOpen = false"></div>
+    <aside class="md:flex md:static w-[230px] bg-[#f8f9fa] border-r border-line-strong flex-col shrink-0 print:hidden"
+      :class="menuOpen ? 'flex fixed inset-y-0 left-0 z-[1100] shadow-lg' : 'hidden'">
       <div class="bg-surface-nav text-white p-3 border-b-2 border-primary text-center">
         <h2 class="m-0 text-heading font-bold">WMS 시스템</h2>
       </div>
@@ -11,6 +14,7 @@
         권한: {{ authStore.user?.role }}
         <button @click="handleLogout"
           class="btn btn-link btn-sm ml-1.5">로그아웃</button>
+        <button @click="passwordOpen = true" class="btn btn-link btn-sm">비밀번호 변경</button>
       </div>
 
       <div class="p-2 border-b border-line">
@@ -30,7 +34,8 @@
 
     <main class="flex-1 flex flex-col min-w-0 md:min-w-[800px] bg-white overflow-hidden">
       <header class="bg-surface-head h-[44px] border-b border-line-strong flex flex-col shrink-0 print:hidden">
-        <div class="flex h-full justify-between items-end px-2.5 pl-[5px]">
+        <div class="flex h-full justify-between items-end gap-1 px-2.5 pl-[5px]">
+          <button class="btn btn-sm mb-1 md:hidden" aria-label="메뉴 열기" @click="menuOpen = true">☰ 메뉴</button>
           <div
             class="flex gap-0.5 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <div v-for="tab in tabStore.openTabs" :key="tab.path"
@@ -43,15 +48,19 @@
                 @click.stop="tabStore.removeTab(tab.path)">✖</button>
             </div>
           </div>
-          <button
-            class="btn btn-sm mb-1"
-            @click="tabStore.closeAllTabs">전체 닫기</button>
+          <div class="flex gap-1 shrink-0">
+            <NotificationBell />
+            <button
+              class="btn btn-sm mb-1"
+              @click="tabStore.closeAllTabs">전체 닫기</button>
+          </div>
         </div>
       </header>
 
       <div class="p-2.5 flex-1 overflow-auto bg-surface-app print:p-0 print:overflow-visible print:bg-white">
         <router-view v-slot="{ Component, route }">
-          <keep-alive>
+          <!-- 탭 화면을 살려 두되, 오래 쓰지 않은 화면은 15개까지만 남겨 메모리가 계속 늘지 않게 합니다. -->
+          <keep-alive :max="15">
             <component :is="Component" :key="route.path" />
           </keep-alive>
         </router-view>
@@ -59,6 +68,9 @@
     </main>
 
   </div>
+
+  <AppDialog />
+  <PasswordChangeModal v-if="passwordOpen" @close="passwordOpen = false" />
 
   <div class="fixed bottom-[30px] right-[30px] z-[9999] flex flex-col gap-2.5 pointer-events-none print:hidden">
     <transition-group enter-active-class="transition-all duration-300 ease-[cubic-bezier(0.68,-0.55,0.265,1.55)]"
@@ -75,11 +87,14 @@
 </template>
 
 <script setup>
-import { watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import { useTabStore } from './stores/tabStore'
 import { useToastStore } from './stores/toastStore'
+import AppDialog from './components/AppDialog.vue'
+import PasswordChangeModal from './components/PasswordChangeModal.vue'
+import NotificationBell from './components/NotificationBell.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,17 +119,26 @@ const menuGroups = [
     { title: '시리얼 조회', path: '/serials' },
   ] },
   { title: '보고서', menus: [
+    { title: '일일 마감', path: '/daily-close' },
     { title: '입출고 장부', path: '/ledger' },
     { title: '입출고 통계', path: '/dashboard' },
+    { title: '작업자 실적', path: '/workers' },
+    { title: '입고 검수 차이', path: '/receipt-issues' },
+    { title: '재고·반품 분석', path: '/analysis' },
   ] },
   { title: '기본 설정', menus: [
     { title: '상품', path: '/items' },
     { title: '보관 위치', path: '/locations' },
     { title: '거래처', path: '/suppliers' },
+    { title: '사용자', path: '/users' },
+    { title: '변경 이력', path: '/changes' },
   ] },
 ]
 
+const menuOpen = ref(false)
+const passwordOpen = ref(false)
 const openMenu = (path) => { router.push(path) }
+watch(() => route.path, () => { menuOpen.value = false })
 
 const handleLogout = () => {
   authStore.logout()

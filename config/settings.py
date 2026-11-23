@@ -11,9 +11,11 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.csp import CSP
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -60,11 +62,16 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'inventory',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',  # 비밀번호·사원증이 바뀌면 이전 로그인 토큰을 무효화
     'corsheaders',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # 운영 모드에서 정적 파일과 빌드한 화면 파일을 내려줍니다.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    # API 응답(JSON)을 압축해 보냅니다. 로그인은 쿠키가 아닌 토큰 헤더를 써서 압축으로 인한 정보 노출(BREACH) 대상이 아닙니다.
+    'django.middleware.gzip.GZipMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -72,7 +79,23 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django.middleware.csp.ContentSecurityPolicyMiddleware',
 ]
+
+# 콘텐츠 보안 정책(CSP): 화면은 이 서버의 스크립트·스타일만 쓰므로, 다른 곳의 코드가 끼어들지 못하게 막습니다.
+# (로그인 토큰을 브라우저에 보관하므로 스크립트 주입을 막는 것이 중요합니다)
+SECURE_CSP = {
+    'default-src': [CSP.SELF],
+    'script-src': [CSP.SELF],
+    'style-src': [CSP.SELF, CSP.UNSAFE_INLINE],  # 화면에서 계산해 넣는 style 속성 (막대 폭 등)
+    'img-src': [CSP.SELF, 'data:', 'blob:'],
+    'font-src': [CSP.SELF, 'data:'],
+    'connect-src': [CSP.SELF],
+    'object-src': [CSP.NONE],
+    'base-uri': [CSP.SELF],
+    'form-action': [CSP.SELF],
+    'frame-ancestors': [CSP.NONE],
+}
 
 ROOT_URLCONF = 'config.urls'
 
@@ -107,6 +130,9 @@ DATABASES = {
         'PORT': os.environ.get('DB_PORT', '3306'),
         # 요청 하나를 하나의 트랜잭션으로 처리해, 오류 시 재고가 일부만 바뀌지 않게 합니다.
         'ATOMIC_REQUESTS': True,
+        # DB 연결을 요청마다 새로 맺지 않고 잠시 재사용합니다. 끊긴 연결은 쓰기 전에 확인해 다시 맺습니다.
+        'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '60')),
+        'CONN_HEALTH_CHECKS': True,
         'TEST': {'NAME': 'test_wms_db'},
     }
 }
@@ -147,6 +173,16 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+# 운영 모드: collectstatic으로 관리자 화면 등의 정적 파일을 모아 두는 곳
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# 운영 모드: 빌드한 화면(npm run build 결과)을 Django가 함께 제공합니다. 개발 중에는 Vite(5173)를 씁니다.
+FRONTEND_DIST = BASE_DIR / 'wms-frontend' / 'dist'
+WHITENOISE_ROOT = FRONTEND_DIST if FRONTEND_DIST.exists() else None
+
+
+# 빌드한 파일 이름에는 내용 해시가 붙어 있어 오래 캐시해도 됩니다.
+def WHITENOISE_IMMUTABLE_FILE_TEST(path, url):  # Django 설정이라 이름이 대문자
+    return url.startswith('/assets/')
 
 
 # Email
@@ -162,24 +198,80 @@ if DEBUG:
 
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 
+TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
+
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': ('rest_framework_simplejwt.authentication.JWTAuthentication',),
     # 권한을 지정하지 않은 API도 로그인 없이는 접근할 수 없습니다.
-    'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.IsAuthenticated',
-    ),
-    'DEFAULT_RENDERER_CLASSES': (
-        'rest_framework.renderers.JSONRenderer',
-    ),
-    # 로그인 시도 횟수 제한(비밀번호 무차별 대입 방지)
+    'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
+    'DEFAULT_RENDERER_CLASSES': ('rest_framework.renderers.JSONRenderer',),
+    # 로그인 시도 횟수 제한(비밀번호 무차별 대입 방지): 접속 주소별, 그리고 계정별(여러 주소에서 한 계정을 노리는 공격 대비)
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/minute',
+        'login_account': '30/hour',
     },
+    # 접속 주소는 서버가 직접 본 값만 믿습니다. (X-Forwarded-For 헤더를 조작해 횟수 제한을 피하지 못하게)
+    # 프록시 뒤에서는 serve.py가 WMS_TRUSTED_PROXY로 실제 접속 주소를 넘겨받습니다.
+    'NUM_PROXIES': 0,
 }
 
+# 횟수 제한 기록을 파일에 남겨 서버를 다시 시작해도 초기화되지 않게 합니다. (테스트는 기본 메모리 캐시)
+if not TESTING:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache', 'LOCATION': str(BASE_DIR / 'cache')}}
+
 ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '')
+# 오류 감시: 같은 오류 알림은 이 시간(분)에 한 번만, 택배사 연결이 이 횟수만큼 연속 실패하면 알립니다.
+ALERT_REPEAT_MINUTES = int(os.environ.get('ALERT_REPEAT_MINUTES', '10'))
+CARRIER_FAIL_ALERT = int(os.environ.get('CARRIER_FAIL_ALERT', '3'))
+
+# 로그: logs/<이름>.log(전체, 30일 보관)와 logs/<이름>-error.log(오류만, 90일 보관)에 하루 단위로 남깁니다.
+# 개발 서버는 dev, 운영 서버(serve.py)는 prod 이름을 씁니다. 테스트 중에는 파일과 알림을 쓰지 않습니다.
+LOG_DIR = BASE_DIR / 'logs'
+LOG_NAME = os.environ.get('WMS_LOG_NAME', 'dev')
+_file_handler = {'class': 'logging.handlers.TimedRotatingFileHandler', 'when': 'midnight', 'encoding': 'utf-8', 'formatter': 'plain', 'delay': True}
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'}},
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+        **(
+            {}
+            if TESTING
+            else {
+                'file': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}.log'), 'backupCount': 30, 'level': 'INFO'},
+                'errors': {**_file_handler, 'filename': str(LOG_DIR / f'{LOG_NAME}-error.log'), 'backupCount': 90, 'level': 'ERROR'},
+                'alert': {'class': 'inventory.monitor.AlertLogHandler', 'level': 'ERROR'},
+            }
+        ),
+    },
+    'root': {'handlers': ['console'] if TESTING else ['console', 'file', 'errors', 'alert'], 'level': 'INFO'},
+    'loggers': {
+        # runserver의 요청 한 줄 기록은 화면(pm2 로그)에만 남깁니다.
+        'django.server': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        # 잘못된 주소(Host)로 들어온 요청은 외부 탐색일 때가 많아 알리지 않고 로그 파일에만 남깁니다.
+        'django.security.DisallowedHost': {'handlers': ['console'] if TESTING else ['file'], 'level': 'ERROR', 'propagate': False},
+    },
+}
+if TESTING:
+    ALERT_WEBHOOK_URL = ''  # 테스트가 실제 메신저로 알리지 않게 (필요한 테스트는 따로 켭니다)
+else:
+    LOG_DIR.mkdir(exist_ok=True)
+
+# 택배사 API. 주소를 비워 두면 택배 연동 없이 동작합니다.
+CARRIER_API_URL = os.environ.get('CARRIER_API_URL', '').rstrip('/')
+CARRIER_API_KEY = os.environ.get('CARRIER_API_KEY', '')
+CARRIER_WEBHOOK_SECRET = os.environ.get('CARRIER_WEBHOOK_SECRET', '')
+CARRIER_CALLBACK_URL = os.environ.get('CARRIER_CALLBACK_URL', '')
+
+# 발주 제안: 발주 후 물건이 들어오기까지 걸리는 날 수
+REORDER_LEAD_DAYS = int(os.environ.get('REORDER_LEAD_DAYS', '7'))
+# 출고 마감: 이 시각 전에 들어온 주문은 그날 출고합니다. 주말 출고를 하면 SHIP_ON_WEEKENDS=1
+SHIP_CUTOFF_TIME = os.environ.get('SHIP_CUTOFF_TIME', '15:00')
+SHIP_ON_WEEKENDS = os.environ.get('SHIP_ON_WEEKENDS', '0') == '1'
+# 순환 재고 조사: 하루에 조사할 위치 수와, 모든 위치를 한 번씩 조사하는 목표 주기(일)
+CYCLE_COUNT_DAILY = int(os.environ.get('CYCLE_COUNT_DAILY', '5'))
+CYCLE_COUNT_DAYS = int(os.environ.get('CYCLE_COUNT_DAYS', '30'))
 
 # 운영 환경에서 HTTPS를 쓸 때 DJANGO_HTTPS=True로 켭니다.
 if env_bool('DJANGO_HTTPS'):
@@ -187,3 +279,7 @@ if env_bool('DJANGO_HTTPS'):
     SECURE_HSTS_SECONDS = 31536000
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+# 로그인할 때 마지막 로그인 시각을 남겨 사용자 관리 화면에서 볼 수 있게 합니다.
+SIMPLE_JWT = {
+    'UPDATE_LAST_LOGIN': True,
+}

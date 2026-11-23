@@ -25,7 +25,7 @@
           <tr>
             <th>상품 수동 등록</th>
             <td colspan="4">
-              <form @submit.prevent="handleAddItem" class="flex items-center gap-1.5">
+              <form @submit.prevent="handleAddItem" class="flex flex-wrap items-center gap-1.5">
                 구분: <select v-model="newItemForm.item_type" class="field w-[80px]" @change="newItemForm.serial_tracked = newItemForm.item_type === '상품'">
                   <option v-for="type in ITEM_TYPES" :key="type" :value="type">{{ type }}</option>
                 </select>
@@ -42,14 +42,16 @@
                 </select>
                 <button type="button" class="btn" @click="addCategory">추가</button>
                 수량: <input type="number" v-model="newItemForm.quantity"
-                  class="field field-num w-[60px]" required />
+                  class="field field-num w-[60px]" min="0" required />
+                안전 재고: <input type="number" v-model.number="newItemForm.safety_stock"
+                  class="field field-num w-[60px]" min="0" required />
                 <button type="submit"
                   class="btn btn-success ml-2">신규
                   등록</button>
 
-                <input type="file" ref="csvInput" accept=".csv" class="hidden" @change="handleCsvUpload" />
+                <input type="file" ref="csvInput" :accept="EXCEL_ACCEPT" class="hidden" @change="handleCsvUpload" />
                 <button type="button" @click="$refs.csvInput.click()"
-                  class="btn btn-warning ml-1">CSV
+                  class="btn btn-warning ml-1" title="첫 줄 제목: SKU, 상품명, 초기수량, 구분 (xlsx 또는 csv)">엑셀
                   일괄 업로드</button>
                 <!-- 🌟 NEW: ABC 분석 실행 버튼 -->
                 <button type="button" @click="runABCAnalysis"
@@ -65,7 +67,7 @@
     <div
       class="panel flex-1 overflow-hidden mt-2.5">
       <div class="panel-header">
-        <span class="panel-title">상품 마스터 관리 목록</span>
+        <span class="panel-title">상품 목록</span>
         <span class="text-body">총 <strong>{{ filteredItems.length }}</strong> 개 상품</span>
       </div>
 
@@ -80,26 +82,23 @@
                >
                 상품명</th>
               <th
-               
+
                 width="150">카테고리</th>
               <!-- 🌟 NEW: ABC 등급 표시 컬럼 -->
               <th
                 class="text-primary"
                 width="60">ABC</th>
+              <th width="80">현재수량</th>
+              <th width="80">안전 재고</th>
               <th
-               
-                width="80">현재수량</th>
-              <th
-               
+
                 width="180">보관 위치</th>
-              <th
-               
-                width="120">관리 도구</th>
+              <th width="170">관리 도구</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="filteredItems.length === 0">
-              <td colspan="9" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다. 위에서 상품을 등록하세요.</td>
+              <td colspan="10" class="text-center text-gray-500 font-bold">조회된 상품이 없습니다. 위에서 상품을 등록하세요.</td>
             </tr>
             <tr v-for="item in filteredItems" :key="item.id">
               <td class="text-center">
@@ -118,10 +117,12 @@
                 :class="{ 'text-danger': item.abc_grade === 'C', 'text-success': item.abc_grade === 'A' }">{{
                   item.abc_grade || '-' }}</td>
               <td class="text-right font-bold"
-                :class="{ 'text-danger': item.quantity === 0 }">{{ item.quantity.toLocaleString() }}</td>
+                :class="{ 'text-danger': item.quantity === 0, 'text-warning': item.quantity > 0 && item.quantity <= item.safety_stock }">{{ item.quantity.toLocaleString() }}</td>
+              <td class="text-right">{{ item.safety_stock }}</td>
               <td class="text-center font-mono">{{ getLocationName(item.location) }}
               </td>
               <td class="text-center flex justify-center gap-1">
+                <button class="btn btn-sm" @click="openEditModal(item)">수정</button>
                 <button
                   class="btn btn-success btn-sm"
                   @click="openTransferModal(item)">위치이동</button>
@@ -135,11 +136,45 @@
       </div>
     </div>
 
+    <!-- 상품 수정 모달 -->
+    <div v-if="editForm" class="modal-overlay" @click.self="editForm = null">
+      <form class="modal w-[450px]" @submit.prevent="submitEdit">
+        <div class="modal-header">상품 수정 <span class="font-mono">({{ editForm.sku }})</span></div>
+        <div class="modal-content flex flex-col gap-2.5">
+          <label class="field-label">상품명
+            <input v-model="editForm.name" class="field w-full mt-1" maxlength="200" required />
+          </label>
+          <label class="field-label">카테고리
+            <select v-model="editForm.category" class="field w-full mt-1">
+              <option :value="null">미분류</option>
+              <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+            </select>
+          </label>
+          <label class="field-label">안전 재고
+            <input v-model.number="editForm.safety_stock" type="number" min="0" class="field field-num w-[120px] mt-1 block" required />
+            <span class="block mt-1 font-normal text-muted">현재 재고가 이 수량 이하이면 재고 부족으로 표시하고 알림을 보냅니다.</span>
+          </label>
+          <div class="field-label">위치 보충 (기본 위치 {{ editForm.location_name || '없음' }})
+            <div class="flex items-center gap-1.5 mt-1 font-normal">
+              최소 <input v-model.number="editForm.pick_min" type="number" min="0" class="field field-num w-[80px]" aria-label="보충 최소" />
+              이하가 되면 최대 <input v-model.number="editForm.pick_max" type="number" min="0" class="field field-num w-[80px]" aria-label="보충 최대" />
+              까지 채움
+            </div>
+            <span class="block mt-1 font-normal text-muted">기본 위치의 재고가 최소 이하로 내려가면 현장 [위치 보충]에 다른 위치에서 가져오라고 안내합니다. 0이면 쓰지 않습니다.</span>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary btn-lg">저장</button>
+          <button type="button" class="btn btn-lg" @click="editForm = null">취소</button>
+        </div>
+      </form>
+    </div>
+
     <!-- 보관 위치 이동 모달 -->
     <div v-if="isTransferModalOpen" class="modal-overlay"
       @click.self="closeTransferModal">
       <div class="modal w-[450px]">
-        <div class="modal-header">보관 위치(위치) 이동</div>
+        <div class="modal-header">보관 위치 이동</div>
         <div class="modal-content">
           <div class="bg-[#eff6ff] border border-[#bfdbfe] text-[#1e40af] p-3 mb-4 text-sm font-bold">대상 상품: {{
             selectedItem?.name }} <span class="font-mono">({{ selectedItem?.sku }})</span></div>
@@ -170,6 +205,8 @@ import { ref, computed, onActivated } from 'vue';
 import axios from 'axios';
 import { useToastStore } from '../../stores/toastStore';
 import { apiErrorMessage } from '../../utils/apiError';
+import { useDialogStore } from '../../stores/dialogStore';
+import { EXCEL_ACCEPT, toCsvFile } from '../../utils/excel';
 
 const items = ref([]);
 const locations = ref([]);
@@ -181,9 +218,10 @@ const isTransferModalOpen = ref(false);
 const selectedItem = ref(null);
 const selectedLocationId = ref('');
 const ITEM_TYPES = ['상품', '구성품', '부자재', '사은품'];
-const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, category: null });
+const emptyItemForm = () => ({ item_type: '상품', serial_tracked: true, sku: '', name: '', quantity: 0, safety_stock: 5, category: null });
 const newItemForm = ref(emptyItemForm());
 const toast = useToastStore();
+const dialog = useDialogStore();
 const csvInput = ref(null);
 
 const fetchItems = async () => {
@@ -240,7 +278,7 @@ const changeItem = async (item, change) => {
 };
 
 const addCategory = async () => {
-  const name = prompt('새 카테고리 이름을 입력하세요.')?.trim();
+  const name = await dialog.prompt('새 카테고리 이름을 입력하세요.', { title: '카테고리 추가', okText: '추가', maxlength: 100 });
   if (!name) return;
   try {
     const res = await axios.post('/api/inventory/categories/', { name });
@@ -259,12 +297,26 @@ const handleAddItem = async () => {
 };
 
 const deleteItem = async (id) => {
-  if (!confirm('정말 이 상품을 삭제하시겠습니까?')) return;
+  if (!(await dialog.confirm('이 상품을 삭제하시겠습니까?\n입출고 이력은 남고 목록에서만 사라집니다.', { danger: true, okText: '삭제' }))) return;
   try {
     await axios.delete(`/api/inventory/items/${id}/`);
     toast.addToast('상품이 삭제되었습니다.', 'success');
     await fetchItems();
   } catch (err) { toast.addToast(apiErrorMessage(err, '삭제 중 오류가 발생했습니다.'), 'error', 5000); }
+};
+
+const editForm = ref(null);
+const openEditModal = (item) => {
+  editForm.value = { id: item.id, sku: item.sku, name: item.name, category: item.category, safety_stock: item.safety_stock, pick_min: item.pick_min, pick_max: item.pick_max, location_name: item.location_name };
+};
+const submitEdit = async () => {
+  const { id, sku, location_name, ...change } = editForm.value;
+  try {
+    await axios.patch(`/api/inventory/items/${id}/`, change);
+    toast.addToast(`[${sku}] 수정되었습니다.`, 'success');
+    editForm.value = null;
+    await fetchItems();
+  } catch (err) { toast.addToast(apiErrorMessage(err, '수정 중 오류가 발생했습니다.'), 'error', 5000); }
 };
 
 const openTransferModal = (item) => {
@@ -286,20 +338,21 @@ const submitTransfer = async () => {
     toast.addToast('보관 위치 이동이 완료되었습니다.', 'success');
     closeTransferModal();
     await fetchItems();
-  } catch (err) { toast.addToast('이동 실패', 'error'); }
+  } catch (err) { toast.addToast(apiErrorMessage(err, '이동 중 오류가 발생했습니다.'), 'error', 5000); }
 };
 
 const handleCsvUpload = async (event) => {
   const file = event.target.files[0];
   if (!file) return;
-  const formData = new FormData();
-  formData.append('file', file);
   try {
+    // 엑셀 파일도 서버가 받는 csv로 바꿔 올립니다.
+    const formData = new FormData();
+    formData.append('file', await toCsvFile(file));
     const res = await axios.post('/api/inventory/items/upload_csv/', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
     toast.addToast(res.data.message, 'success');
     await fetchItems();
   } catch (err) {
-    toast.addToast(err.response?.data?.error || 'CSV 업로드 중 오류가 발생했습니다.', 'error');
+    toast.addToast(apiErrorMessage(err, '파일을 읽지 못했습니다. 첫 줄 제목(SKU, 상품명, 초기수량, 구분)을 확인하세요.'), 'error', 6000);
   } finally { event.target.value = ''; }
 };
 
@@ -309,7 +362,7 @@ const runABCAnalysis = async () => {
     const res = await axios.post('/api/inventory/items/analyze_abc/');
     toast.addToast(res.data.message, 'success');
     await fetchItems(); // 분석 후 테이블 갱신
-  } catch (err) {
+  } catch {
     toast.addToast('ABC 분석 중 오류가 발생했습니다.', 'error');
   }
 };

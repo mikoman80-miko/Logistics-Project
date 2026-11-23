@@ -2,7 +2,7 @@
   <div class="erp-login-bg">
     <div class="erp-login-box">
       <div class="login-header">
-        <h1>WMS System Login</h1>
+        <h1>WMS 물류관리시스템 로그인</h1>
       </div>
       <form @submit.prevent="handleLogin" class="login-body">
         <table class="login-table">
@@ -22,6 +22,10 @@
           {{ isLoading ? '인증 중...' : '시스템 접속' }}
         </button>
       </form>
+      <form class="px-5 pb-5" @submit.prevent="handleBadge">
+        <div class="border-t border-line pt-3 mb-1.5 text-caption text-muted">현장작업자는 사원증을 스캔해도 됩니다.</div>
+        <input v-model="badgeCode" type="password" class="field field-scan w-full" placeholder="사원증 스캔" autocomplete="off" aria-label="사원증" />
+      </form>
     </div>
   </div>
 </template>
@@ -37,6 +41,16 @@ const username = ref(import.meta.env.VITE_DEV_LOGIN_ID || '');
 const password = ref(import.meta.env.VITE_DEV_LOGIN_PW || '');
 const errorMessage = ref(''); 
 const isLoading = ref(false);
+const badgeCode = ref('');
+
+const handleBadge = async () => {
+  const code = badgeCode.value.trim();
+  badgeCode.value = '';
+  if (!code) return;
+  errorMessage.value = '';
+  const result = await authStore.loginWithBadge(code);
+  if (!result.success) errorMessage.value = result.message;
+};
 
 const handleLogin = async () => {
   isLoading.value = true; 

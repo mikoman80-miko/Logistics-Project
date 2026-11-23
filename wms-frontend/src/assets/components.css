@@ -6,6 +6,16 @@
 @layer base {
   body {
     margin: 0;
+    /* 한글 단어가 중간에서 끊기지 않게, 줄바꿈은 띄어쓰기 단위로 합니다. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* 송장처럼 따로 인쇄할 영역(.print-only)이 열려 있으면 그것만 인쇄합니다. */
+@media print {
+  body:has(> .print-only) > :not(.print-only) {
+    display: none !important;
   }
 }
 
@@ -14,6 +24,10 @@
   /* <div class="page"> : 세로로 쌓는 기본 화면 */
   .page {
     @apply flex flex-col gap-2.5 h-full;
+  }
+  /* 화면 전체가 스크롤되는 페이지에서는 패널이 줄어들지 않고 내용만큼 커집니다. (표가 잘리지 않게) */
+  .page.overflow-y-auto > .panel {
+    @apply shrink-0;
   }
 
   /* <div class="page-split"> : PC는 좌우 분할, 모바일은 세로 배치 */
@@ -204,7 +218,7 @@
   }
 
   .form-table th {
-    @apply w-[120px] px-2 py-1 text-right font-bold bg-surface-head border border-line;
+    @apply w-[120px] px-2 py-1 text-right font-bold whitespace-nowrap bg-surface-head border border-line;
   }
 
   .form-table td {
@@ -265,7 +279,7 @@
 
   /* ---------- 첫 화면 카드 ---------- */
   .today-card {
-    @apply flex flex-col items-center p-4 cursor-pointer text-body text-ink bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)] hover:bg-primary-soft;
+    @apply flex flex-col items-center p-4 text-center cursor-pointer text-body text-ink bg-white border border-line-strong shadow-[2px_2px_0px_rgba(0,0,0,0.05)] hover:bg-primary-soft;
     font-family: inherit;
   }
 
@@ -296,6 +310,14 @@
   .work-row {
     @apply grid grid-cols-[1.2fr_1.5fr_1fr] items-center gap-4 h-24 px-6 cursor-pointer text-left text-3xl text-ink bg-white border-2 border-line-strong rounded hover:bg-primary-soft hover:border-primary;
     font-family: inherit;
+  }
+
+  /* 출고 마감 열이 있는 주문 목록 (번호 · 고객 · 수량 · 마감) */
+  .work-row-due {
+    @apply grid-cols-[1.3fr_1.2fr_0.8fr_1.5fr];
+  }
+  .work-urgent {
+    @apply inline-block mr-2 px-2 text-2xl align-middle text-white bg-danger rounded;
   }
 
   .work-task {

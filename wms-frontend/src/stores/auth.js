@@ -64,7 +64,7 @@ export const useAuthStore = defineStore('auth', () => {
             originalRequest.headers['Authorization'] = `Bearer ${newToken}`
             return axios(originalRequest) // 🌟 중단된 요청 재실행! (사용자는 에러를 모름)
           }
-        } catch (refreshError) {
+        } catch {
           console.error('토큰 갱신 실패')
         }
         if (isAuthenticated.value) {
@@ -76,28 +76,38 @@ export const useAuthStore = defineStore('auth', () => {
     }
   )
 
+  // 로그인 결과(토큰과 권한)를 저장하고 권한별 첫 화면으로 보냅니다.
+  const startSession = (data, username) => {
+    // 권한은 서버의 계정 정보를 따릅니다. (메뉴 표시용이며, 실제 차단은 서버가 합니다)
+    const role = data.role || '현장작업자'
+    localStorage.setItem('access_token', data.access)
+    if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
+    localStorage.setItem('username', username)
+    localStorage.setItem('user_role', role)
+    axios.defaults.headers.common['Authorization'] = `Bearer ${data.access}`
+    isAuthenticated.value = true
+    user.value = { name: username, role }
+    router.push(role === '관리자' ? '/today' : '/work')
+  }
+
+  // 사원증 바코드로 로그인하거나, 현장 PC에서 작업자를 바꿉니다. (현장작업자 계정만)
+  const loginWithBadge = async (code) => {
+    try {
+      const { data } = await axios.post('/api/token/badge/', { code })
+      startSession(data, data.username)
+      return { success: true, name: data.name || data.username }
+    } catch (error) {
+      const status = error.response?.status
+      if (status === 429) return { success: false, message: '시도가 너무 많습니다. 잠시 후 다시 스캔하세요.' }
+      if (status === 401 || status === 400) return { success: false, message: '등록되지 않았거나 쓸 수 없는 사원증입니다.' }
+      return { success: false, message: '서버에 연결할 수 없습니다.' }
+    }
+  }
+
   const login = async (username, password) => {
     try {
       const response = await axios.post('/api/token/', { username, password })
-      const token = response.data.access
-      const refresh = response.data.refresh // 백엔드의 리프레시 토큰
-
-      // 권한은 서버의 계정 정보를 따릅니다. (메뉴 표시용이며, 실제 차단은 서버가 합니다)
-      const role = response.data.role || '현장작업자'
-
-      localStorage.setItem('access_token', token)
-      if (refresh) localStorage.setItem('refresh_token', refresh)
-      localStorage.setItem('username', username)
-      localStorage.setItem('user_role', role)
-
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-
-      isAuthenticated.value = true
-      user.value = { name: username, role: role }
-
-      // 권한별 첫 화면 분기
-      router.push(role === '관리자' ? '/today' : '/work')
-
+      startSession(response.data, username)
       return { success: true }
     } catch (error) {
       console.error('로그인 실패:', error)
@@ -108,5 +118,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { isAuthenticated, user, login, logout }
+  return { isAuthenticated, user, login, logout, loginWithBadge }
 })
