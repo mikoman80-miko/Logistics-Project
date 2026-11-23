@@ -1,6 +1,35 @@
 # WMS 물류관리시스템
 
-Django(백엔드)와 Vue(프런트엔드)로 만든 창고 관리 시스템입니다.
+[![CI](https://github.com/mikoman80-miko/Logistics-Project/actions/workflows/ci.yml/badge.svg)](https://github.com/mikoman80-miko/Logistics-Project/actions/workflows/ci.yml)
+
+Django(백엔드)와 Vue(프런트엔드)로 만든 창고 관리 시스템입니다. 발주·입고부터 재고, 주문·출고, 택배 연동, 반품까지 한 흐름으로 다루고, 현장 작업자는 바코드 스캔만으로 작업합니다.
+
+## 한눈에 보기
+
+| | |
+| --- | --- |
+| **해결하려는 문제** | 엑셀·종이로 하던 입출고와 재고 관리에서 생기는 수량 불일치, 잘못된 출고, 추적 불가 |
+| **핵심 기능** | 시리얼·수량 겸용 재고, 위치별 재고와 이동, 스캔 입고·출고·집품, 묶음배송·부분 출고, 반품, 스캔·순환 재고 조사, 발주 제안, 일일 마감, 변경 이력 |
+| **연동** | 가상 택배사 서버(운송장 발급, 집하 요청, 서명된 웹훅), 슬랙·디스코드 알림 |
+| **기술** | Django 6 · DRF · JWT · MariaDB / Vue 3 · Pinia · Tailwind v4 · Vite / Playwright · GitHub Actions · pm2 · waitress |
+| **품질** | 단위 테스트 169개, Playwright 화면 테스트 32개, Ruff·ESLint(경고 0), pre-commit, CI |
+
+자세한 데이터 구조(ERD)와 설계 결정은 [docs/DESIGN.md](docs/DESIGN.md), 폴더 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 봅니다.
+
+## 빠르게 체험하기
+
+설치(아래 "처음 설치") 후 시연용 데이터를 넣고 서버를 켜면 모든 메뉴를 바로 눌러 볼 수 있습니다.
+
+```powershell
+myenv\Scripts\python manage.py seed_demo   # 개발 DB 전용. 발주→입고→주문→출고→반품을 실제 API로 처리해 만든 데이터
+npm run start                              # http://localhost:5173
+```
+
+시연 계정(공개용 데모 값)은 관리자 `manager01`, 현장작업자 `worker01`~`worker05`이고 비밀번호는 `Demo-wms-2026!`입니다.
+
+## 화면
+
+> 화면 캡처는 `docs/screenshots/`에 추가합니다.
 
 ## 처음 설치
 
