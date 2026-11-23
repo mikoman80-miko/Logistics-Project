@@ -1,4 +1,4 @@
-"""가온택배 웹 화면 (배송 조회, 송장 콘솔, 웹훅 기록, API 문서). 데이터는 server.py가 넘겨줍니다."""
+"""데모택배 웹 화면 (배송 조회, 송장 콘솔, 웹훅 기록, API 문서). 데이터는 server.py가 넘겨줍니다."""
 
 from datetime import datetime
 from html import escape
@@ -90,7 +90,7 @@ nav{order:3;flex:0 0 calc(100% + 32px);overflow-x:auto;margin:6px -16px 0;paddin
 """
 
 MENU = [('/', '배송 조회', 'track'), ('/console', '송장 콘솔', 'console'), ('/webhooks', '웹훅 기록', 'webhooks'), ('/docs', 'API 문서', 'docs')]
-DISCLAIMER = '가온택배는 WMS 개발·시연을 위한 가상 택배사입니다. 실제 배송은 이루어지지 않습니다.'
+DISCLAIMER = '데모택배는 WMS 개발·시연을 위한 가상 택배사입니다. 실제 배송은 이루어지지 않습니다.'
 
 
 def layout(title, body, active='', refresh=0, lead=None, crumb=''):
@@ -108,12 +108,12 @@ def layout(title, body, active='', refresh=0, lead=None, crumb=''):
     foot = ''.join(f'<a href="{href}">{label}</a>' for href, label, _ in MENU)
     content = f'<div class="wrap">{body}</div>' if band else body
     return f'''<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{meta}
-<title>{escape(title)} | 가온택배</title><style>{STYLE}</style></head><body class="{'' if band else 'home'}">
+<title>{escape(title)} | 데모택배</title><style>{STYLE}</style></head><body class="{'' if band else 'home'}">
 <div class="util"><div class="wrap"><span>개발·시연용 가상 택배 서비스</span><span class="links"><a href="/">배송 조회</a><a href="/docs">기업고객 API</a><a href="/console">운영자 콘솔</a></span></div></div>
-<header class="gnb"><div class="wrap"><a class="logo" href="/"><i>가</i>가온택배</a><nav>{menu}</nav><span class="demo">가상 택배사</span></div></header>
+<header class="gnb"><div class="wrap"><a class="logo" href="/"><i>데</i>데모택배</a><nav>{menu}</nav><span class="demo">가상 택배사</span></div></header>
 {band}<main>{content}</main>
-<footer><div class="wrap"><div class="foot"><div><div class="logo"><i>가</i>가온택배</div><p>{DISCLAIMER}</p></div><div class="foot-links">{foot}</div></div>
-<div class="copy">© 가온택배 (가상 서비스) · 화면의 이름·주소·전화번호는 시연용 데이터입니다.</div></div></footer></body></html>'''
+<footer><div class="wrap"><div class="foot"><div><div class="logo"><i>데</i>데모택배</div><p>{DISCLAIMER}</p></div><div class="foot-links">{foot}</div></div>
+<div class="copy">© 데모택배 (가상 서비스) · 화면의 이름·주소·전화번호는 시연용 데이터입니다.</div></div></footer></body></html>'''
 
 
 # ---------- 표시용 도우미 ----------
@@ -181,7 +181,7 @@ def home_page(error='', number=''):
             ('연동', False, '/webhooks', 'WMS로 보낸 상태 알림과 재전송 기록은 웹훅 기록에서 확인하세요.'),
         ]
     )
-    body = f'''<section class="hero" id="track"><div class="wrap"><span class="eyebrow">가온택배 배송 조회</span>
+    body = f'''<section class="hero" id="track"><div class="wrap"><span class="eyebrow">데모택배 배송 조회</span>
 <h1>운송장 번호 하나로<br>배송과 반품 회수를 확인하세요</h1><p>집하부터 배송 완료까지 단계별 진행 상황을 바로 보여드립니다.</p>
 <form class="search" action="/track" method="get"><input name="no" value="{escape(number)}" placeholder="운송장 번호 12자리" inputmode="numeric" autofocus aria-label="운송장 번호">
 <button>조회</button></form>{err}<div class="hero-note">운송장 번호는 숫자만 입력해 주세요. 개인정보는 일부만 표시합니다.</div></div></section>
@@ -321,7 +321,7 @@ def docs_page(base_url):
     "kind": "delivery",
     "ref": "ORD-20261104-0001",
     "status": "접수",
-    "carrier": "가온택배",
+    "carrier": "데모택배",
     "events": [
       {"event_id": "9f1c...", "waybill_no": "581234567890", "status": "접수",
        "location": "송장 접수", "occurred_at": "2026-11-04T10:00:00+09:00"}
@@ -357,7 +357,7 @@ X-Carrier-Signature: 3b5d...(HMAC-SHA256 16진수)
             (503, 'SYSTEM_BUSY', '일시 장애. 잠시 후 다시 시도'),
         ]
     )
-    lead = f'<p class="lead">쇼핑몰·WMS가 가온택배와 연동하는 방법입니다. 기본 주소 <code>{escape(base_url)}</code></p>'
+    lead = f'<p class="lead">쇼핑몰·WMS가 데모택배와 연동하는 방법입니다. 기본 주소 <code>{escape(base_url)}</code></p>'
     toc = ''.join(
         f'<a href="#{key}">{label}</a>'
         for key, label in [('common', '공통'), ('delivery', '배송'), ('pickup', '반품 회수'), ('webhook', '상태 알림'), ('demo', '시연용')]

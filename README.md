@@ -4,6 +4,8 @@
 
 Django(백엔드)와 Vue(프런트엔드)로 만든 창고 관리 시스템입니다. 발주·입고부터 재고, 주문·출고, 택배 연동, 반품까지 한 흐름으로 다루고, 현장 작업자는 바코드 스캔만으로 작업합니다.
 
+물류센터에서 입출고·재고 실사·창고 운영을 10년 넘게 맡으며, 간단한 시스템 수정도 다른 부서에 요청해야 해서 오래 걸렸던 경험에서 시작했습니다. 현업에서 하던 업무를 기준으로 실제 업무에 쓸 수 있는 수준을 목표로 만들었습니다. 개발에는 AI 코딩 도구(Claude Code)를 활용했습니다.
+
 ## 한눈에 보기
 
 | | |
@@ -12,9 +14,9 @@ Django(백엔드)와 Vue(프런트엔드)로 만든 창고 관리 시스템입�
 | **핵심 기능** | 시리얼·수량 겸용 재고, 위치별 재고와 이동, 스캔 입고·출고·집품, 묶음배송·부분 출고, 반품, 스캔·순환 재고 조사, 발주 제안, 일일 마감, 변경 이력 |
 | **연동** | 가상 택배사 서버(운송장 발급, 집하 요청, 서명된 웹훅), 슬랙·디스코드 알림 |
 | **기술** | Django 6 · DRF · JWT · MariaDB / Vue 3 · Pinia · Tailwind v4 · Vite / Playwright · GitHub Actions · pm2 · waitress |
-| **품질** | 단위 테스트 169개, Playwright 화면 테스트 32개, Ruff·ESLint(경고 0), pre-commit, CI |
+| **품질** | 단위 테스트 170개, Playwright 화면 테스트 32개, Ruff·ESLint(경고 0), pre-commit, CI |
 
-자세한 데이터 구조(ERD)와 설계 결정은 [docs/DESIGN.md](docs/DESIGN.md), 폴더 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 봅니다.
+자세한 데이터 구조(ERD)와 설계 결정은 [docs/DESIGN.md](docs/DESIGN.md), 폴더 구조는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 봅니다. 화면 설계서는 [docs/WMS_화면설계서_v2.0.pptx](docs/WMS_화면설계서_v2.0.pptx)입니다.
 
 ## 빠르게 체험하기
 
@@ -25,7 +27,7 @@ myenv\Scripts\python manage.py seed_demo   # 개발 DB 전용. 발주→입고�
 npm run start                              # http://localhost:5173
 ```
 
-시연 영상(1분 22초)과 제출용 포트폴리오 PDF는 [portfolio/](portfolio/) 폴더에 있습니다. ([WMS_시연영상.mp4](portfolio/WMS_시연영상.mp4), [WMS_포트폴리오.pdf](portfolio/WMS_포트폴리오.pdf))
+시연 영상(1분 20초)과 제출용 포트폴리오 PDF는 [portfolio/](portfolio/) 폴더에 있습니다. ([WMS_시연영상.mp4](portfolio/WMS_시연영상.mp4), [WMS_포트폴리오.pdf](portfolio/WMS_포트폴리오.pdf))
 
 시연 계정(공개용 데모 값)은 관리자 `manager01`, 현장작업자 `worker01`~`worker05`이고 비밀번호는 `Demo-wms-2026!`입니다.
 
@@ -53,7 +55,7 @@ npm run start                              # http://localhost:5173
 
 ### 가상 택배사 송장 콘솔
 
-![가온택배 송장 콘솔](docs/screenshots/12-carrier-console.png)
+![데모택배 송장 콘솔](docs/screenshots/12-carrier-console.png)
 
 ## 처음 설치
 
@@ -177,7 +179,7 @@ npx pm2 logs wms       # 로그 보기
 
 ## 택배 연동 (가상 택배사)
 
-개발·시연용 가상 택배사 "가온택배" 서버가 들어 있습니다. WMS는 실제 택배사와 같은 방식으로 HTTP API를 호출하고, 택배사는 배송 단계가 바뀔 때마다 WMS에 알립니다.
+개발·시연용 가상 택배사 "데모택배" 서버가 들어 있습니다. WMS는 실제 택배사와 같은 방식으로 HTTP API를 호출하고, 택배사는 배송 단계가 바뀔 때마다 WMS에 알립니다.
 
 ```powershell
 # 터미널 3 (프로젝트 루트)
@@ -187,7 +189,7 @@ myenv\Scripts\python mock_carrier\server.py
 - `.env`에 `.env.example`의 `CARRIER_...` 항목을 복사해 넣습니다. `CARRIER_API_URL`을 비우면 택배 연동 없이 동작합니다.
 - 주문을 등록하면 운송장이 발급되고, 출고를 완료하면 집하를 요청합니다. 이후 단계(집하 → 배송중 → 배송출발 → 배송완료)는 `MOCK_CARRIER_STEP_SECONDS`초마다 진행됩니다.
 - 반품을 등록하면 회수를 요청합니다. 회수지를 비워 두면 그 기기를 출고한 주문의 배송지를 씁니다.
-- 가온택배 화면 (http://127.0.0.1:8100)
+- 데모택배 화면 (http://127.0.0.1:8100)
   - 배송 조회 `/`: 고객이 보는 화면입니다. 진행 단계와 이력을 보여주고, 이름·전화번호·주소는 일부만 표시합니다.
   - 송장 콘솔 `/console`: 송장 검색과 상태별 현황을 봅니다. 시연할 때 [다음 단계]·[완료까지]·[취소]로 바로 진행합니다.
   - 웹훅 기록 `/webhooks`: WMS에 보낸 상태 알림과 응답 결과입니다. WMS가 알림을 못 받을 때 원인을 찾습니다.

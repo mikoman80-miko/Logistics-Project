@@ -1,3 +1,5 @@
+import os
+import tempfile
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -78,6 +80,15 @@ class AuthTests(BaseCase):
         codes = [self.client.post('/api/token/', {'username': 'boss', 'password': 'x'}, REMOTE_ADDR=f'10.0.1.{i}').status_code for i in range(32)]
         self.assertEqual(codes[:30], [401] * 30)
         self.assertEqual(codes[30:], [429, 429])
+
+    def test_corrupt_throttle_cache_file_does_not_block_login(self):
+        # 서버가 캐시 파일을 쓰다 꺼져 파일이 깨져도 로그인이 500 오류로 막히지 않아야 합니다.
+        with tempfile.TemporaryDirectory() as tmp, override_settings(CACHES={'default': {'BACKEND': 'config.cache.SafeFileBasedCache', 'LOCATION': tmp}}):
+            self.assertEqual(self.client.post('/api/token/', {'username': 'boss', 'password': 'x'}).status_code, 401)
+            for name in os.listdir(tmp):
+                with open(os.path.join(tmp, name), 'wb') as f:
+                    f.write(b'\x00' * 49)
+            self.assertEqual(self.client.post('/api/token/', {'username': 'boss', 'password': 'x'}).status_code, 401)
 
     def test_any_staff_account_is_admin(self):
         # 사용자 이름이 admin이 아니어도 관리자 계정이면 변경할 수 있어야 합니다.

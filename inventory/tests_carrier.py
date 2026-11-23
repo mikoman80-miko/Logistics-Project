@@ -1,4 +1,5 @@
 """택배 연동 테스트. 가상 택배사 서버를 실제로 띄워 HTTP로 통신합니다."""
+
 import hashlib
 import hmac
 import importlib.util
@@ -198,8 +199,9 @@ class LiveWebhookTests(LiveServerTestCase):
             threading.Thread(target=server.serve_forever, daemon=True).start()
             url = f'http://127.0.0.1:{server.server_address[1]}'
             try:
-                with override_settings(CARRIER_API_URL=url, CARRIER_API_KEY=API_KEY, CARRIER_WEBHOOK_SECRET=SECRET,
-                                       CARRIER_CALLBACK_URL=f'{self.live_server_url}{WEBHOOK}'):
+                with override_settings(
+                    CARRIER_API_URL=url, CARRIER_API_KEY=API_KEY, CARRIER_WEBHOOK_SECRET=SECRET, CARRIER_CALLBACK_URL=f'{self.live_server_url}{WEBHOOK}'
+                ):
                     order = SalesOrder.objects.create(order_no='ORD-LIVE', customer='고객', **ADDRESS)
                     order.waybill_no = carrier.create_shipment(order)['waybill_no']
                     order.save()
@@ -216,7 +218,7 @@ class LiveWebhookTests(LiveServerTestCase):
 
 
 class CarrierPagesTests(CarrierCase):
-    """가온택배 웹 화면: 배송 조회(개인정보 가림), 콘솔 조작, 웹훅 기록, API 문서"""
+    """데모택배 웹 화면: 배송 조회(개인정보 가림), 콘솔 조작, 웹훅 기록, API 문서"""
 
     def page(self, path, **kwargs):
         return requests.get(f'{self.url}{path}', timeout=5, **kwargs)

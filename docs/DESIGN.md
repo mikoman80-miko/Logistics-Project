@@ -33,6 +33,13 @@ erDiagram
 
 그 밖의 모델: `DailyClose`(일일 마감), `AppNotification`·`NotificationSeen`(화면 안 알림과 읽음 표시).
 
+주요 컬럼을 포함한 영역별 ERD입니다. (정의는 [inventory/models.py](../inventory/models.py))
+
+![상품·재고](erd/erd-1-stock.png)
+![입고](erd/erd-2-inbound.png)
+![출고·반품·택배](erd/erd-3-outbound.png)
+![이력·감사](erd/erd-4-audit.png)
+
 ## 2. 주요 설계 결정
 
 ### 재고 수량은 한 곳에서만 바꾼다
@@ -69,7 +76,7 @@ erDiagram
 | 구분 | 도구 | 실행 |
 | --- | --- | --- |
 | 백엔드 린트 | Ruff | `./verify.sh` |
-| 백엔드 단위 테스트 | Django TestCase (169개) | `./verify.sh` |
+| 백엔드 단위 테스트 | Django TestCase (170개) | `./verify.sh` |
 | 화면 린트·빌드 | ESLint(경고 0), Vite | `./verify.sh` |
 | 화면 자동 테스트 | Playwright 32개 (실제 서버·테스트 DB) | `cd wms-frontend && npm run e2e` |
 | 커밋 시 검사 | pre-commit (ruff, eslint 등) | 자동 |

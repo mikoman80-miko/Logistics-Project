@@ -2,6 +2,7 @@
 
 현재 구현은 가상 택배사(mock_carrier/server.py)의 API 규격을 따릅니다.
 """
+
 import hashlib
 import hmac
 import logging
@@ -14,7 +15,7 @@ from . import monitor
 
 logger = logging.getLogger(__name__)
 
-CARRIER_NAME = '가온택배'
+CARRIER_NAME = '데모택배'
 DELIVERED = '배송완료'
 PICKED_UP = '회수완료'
 
@@ -33,8 +34,7 @@ def tracking_url(waybill_no):
 
 def _call(method, path, payload=None):
     try:
-        res = requests.request(method, f'{settings.CARRIER_API_URL}{path}', json=payload, timeout=5,
-                               headers={'X-API-Key': settings.CARRIER_API_KEY})
+        res = requests.request(method, f'{settings.CARRIER_API_URL}{path}', json=payload, timeout=5, headers={'X-API-Key': settings.CARRIER_API_KEY})
     except requests.RequestException:
         logger.warning('택배사 연결 실패: %s %s', method, path)
         monitor.carrier_result(False)
@@ -51,8 +51,13 @@ def _call(method, path, payload=None):
 
 
 def _party(record):
-    return {'name': record.contact_name, 'phone': record.contact_phone, 'zipcode': record.zipcode,
-            'address': record.address, 'address_detail': record.address_detail}
+    return {
+        'name': record.contact_name,
+        'phone': record.contact_phone,
+        'zipcode': record.zipcode,
+        'address': record.address,
+        'address_detail': record.address_detail,
+    }
 
 
 def create_shipment(order):

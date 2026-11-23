@@ -1,4 +1,4 @@
-"""가상 택배사 '가온택배' API 서버 (개발·시연용)
+"""가상 택배사 '데모택배' API 서버 (개발·시연용)
 
 실제 택배사 API처럼 별도 포트에서 실행되며, WMS는 HTTP로만 통신합니다.
     myenv\\Scripts\\python mock_carrier\\server.py            # 기본 포트 8100
@@ -7,6 +7,7 @@
 - 일정 시간마다 배송 단계가 진행되고, 바뀔 때마다 WMS로 상태를 알립니다(웹훅, HMAC 서명).
 - 화면: 배송 조회(/), 송장 콘솔(/console), 웹훅 기록(/webhooks), API 문서(/docs)
 """
+
 import argparse
 import hashlib
 import hmac
@@ -34,7 +35,7 @@ import carrier_pages as pages  # noqa: E402  (같은 폴더의 화면 모듈)
 
 load_dotenv(BASE_DIR.parent / '.env')
 
-CARRIER_NAME = '가온택배'
+CARRIER_NAME = '데모택배'
 API_KEY = os.environ.get('CARRIER_API_KEY', 'mock-carrier-key')
 WEBHOOK_SECRET = os.environ.get('CARRIER_WEBHOOK_SECRET', 'mock-webhook-secret')
 STEP_SECONDS = int(os.environ.get('MOCK_CARRIER_STEP_SECONDS', '60'))  # 단계가 자동으로 넘어가는 간격
@@ -44,7 +45,13 @@ RETRY_WAITS = (0, 3, 10)  # 웹훅 재시도 간격(초)
 
 # 단계와 그때의 위치 안내
 FLOWS = {
-    'delivery': [('접수', '송장 접수'), ('집하', '출고지 집하'), ('배송중', '중앙 허브 간선 이동'), ('배송출발', '배송지 대리점 출발'), ('배송완료', '수령인 전달 완료')],
+    'delivery': [
+        ('접수', '송장 접수'),
+        ('집하', '출고지 집하'),
+        ('배송중', '중앙 허브 간선 이동'),
+        ('배송출발', '배송지 대리점 출발'),
+        ('배송완료', '수령인 전달 완료'),
+    ],
     'pickup': [('회수접수', '회수 요청 접수'), ('회수집하', '고객 방문 수거'), ('회수이동중', '중앙 허브 간선 이동'), ('회수완료', '입고지(물류센터) 도착')],
 }
 CANCELLABLE = {'접수', '회수접수'}
@@ -71,7 +78,7 @@ def store():
 
 def init_db():
     with store() as conn:
-        conn.executescript('''
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS shipments (
                 waybill_no TEXT PRIMARY KEY, kind TEXT, ref TEXT, name TEXT, phone TEXT, zipcode TEXT,
                 address TEXT, address_detail TEXT, callback_url TEXT, status TEXT, ready INTEGER DEFAULT 0,
@@ -81,7 +88,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS webhook_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, waybill_no TEXT, status TEXT, url TEXT,
                 attempt INTEGER, result_code INTEGER, error TEXT, sent_at TEXT);
-        ''')
+        """)
 
 
 def new_waybill(conn):
@@ -115,8 +122,10 @@ def shipment_data(conn, waybill_no, private=False):
 
 def log_webhook(waybill_no, status, url, attempt, result_code=None, error=''):
     with store() as conn:
-        conn.execute('INSERT INTO webhook_logs (waybill_no, status, url, attempt, result_code, error, sent_at) VALUES (?,?,?,?,?,?,?)',
-                     (waybill_no, status, url, attempt, result_code, error[:200], now_text()))
+        conn.execute(
+            'INSERT INTO webhook_logs (waybill_no, status, url, attempt, result_code, error, sent_at) VALUES (?,?,?,?,?,?,?)',
+            (waybill_no, status, url, attempt, result_code, error[:200], now_text()),
+        )
 
 
 def notify(callback_url, kind, event):
@@ -180,8 +189,7 @@ def ticker():
     while True:
         time.sleep(5)
         with store() as conn:
-            due = conn.execute('SELECT * FROM shipments WHERE changed_at <= ? AND status NOT IN (?,?,?)',
-                               (time.time() - STEP_SECONDS, *FINISHED)).fetchall()
+            due = conn.execute('SELECT * FROM shipments WHERE changed_at <= ? AND status NOT IN (?,?,?)', (time.time() - STEP_SECONDS, *FINISHED)).fetchall()
             for row in due:
                 advance(conn, row)
 
@@ -306,8 +314,21 @@ class Handler(BaseHTTPRequestHandler):
             waybill_no = new_waybill(conn)
             conn.execute(
                 'INSERT INTO shipments VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?)',
-                (waybill_no, kind, ref, party['name'], party['phone'], party['zipcode'], party['address'], party['address_detail'],
-                 str(data.get('callback_url') or ''), '', now_text(), time.time()))
+                (
+                    waybill_no,
+                    kind,
+                    ref,
+                    party['name'],
+                    party['phone'],
+                    party['zipcode'],
+                    party['address'],
+                    party['address_detail'],
+                    str(data.get('callback_url') or ''),
+                    '',
+                    now_text(),
+                    time.time(),
+                ),
+            )
             add_event(conn, waybill_no, kind, FLOWS[kind][0][0])
             return 201, shipment_data(conn, waybill_no)
 
@@ -384,8 +405,14 @@ class Handler(BaseHTTPRequestHandler):
             rows = conn.execute(sql + ' ORDER BY created_at DESC LIMIT 200', params).fetchall()
             total = dict(conn.execute('SELECT status, COUNT(*) FROM shipments GROUP BY status').fetchall())
         moving = sum(v for k, v in total.items() if k not in FINISHED and k not in CANCELLABLE)
-        counts = [('전체 송장', sum(total.values())), ('접수 대기', total.get('접수', 0) + total.get('회수접수', 0)), ('이동 중', moving),
-                  ('배송완료', total.get('배송완료', 0)), ('회수완료', total.get('회수완료', 0)), ('취소', total.get('취소', 0))]
+        counts = [
+            ('전체 송장', sum(total.values())),
+            ('접수 대기', total.get('접수', 0) + total.get('회수접수', 0)),
+            ('이동 중', moving),
+            ('배송완료', total.get('배송완료', 0)),
+            ('회수완료', total.get('회수완료', 0)),
+            ('취소', total.get('취소', 0)),
+        ]
         statuses = [name for flow in FLOWS.values() for name, _ in flow] + ['취소']
         return pages.console_page(rows, counts, query, {'step': STEP_SECONDS, 'fail_rate': FAIL_RATE, 'statuses': statuses})
 
