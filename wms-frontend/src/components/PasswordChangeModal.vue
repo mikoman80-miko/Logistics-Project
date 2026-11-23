@@ -49,6 +49,10 @@ const submit = async () => {
   isSaving.value = true
   try {
     const res = await axios.post('/api/account/password/', { current_password: form.value.current, new_password: form.value.next })
+    // 서버가 이전 로그인 토큰을 무효화하므로, 새로 받은 토큰으로 이어서 씁니다.
+    localStorage.setItem('access_token', res.data.access)
+    localStorage.setItem('refresh_token', res.data.refresh)
+    axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.access}`
     toast.addToast(res.data.message, 'success', 5000)
     emit('close')
   } catch (err) {

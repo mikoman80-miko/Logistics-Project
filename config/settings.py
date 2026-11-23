@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'inventory',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',  # 비밀번호·사원증이 바뀌면 이전 로그인 토큰을 무효화
     'corsheaders',
 ]
 
@@ -197,16 +198,26 @@ if DEBUG:
 
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 
+TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ('rest_framework_simplejwt.authentication.JWTAuthentication',),
     # 권한을 지정하지 않은 API도 로그인 없이는 접근할 수 없습니다.
     'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
     'DEFAULT_RENDERER_CLASSES': ('rest_framework.renderers.JSONRenderer',),
-    # 로그인 시도 횟수 제한(비밀번호 무차별 대입 방지)
+    # 로그인 시도 횟수 제한(비밀번호 무차별 대입 방지): 접속 주소별, 그리고 계정별(여러 주소에서 한 계정을 노리는 공격 대비)
     'DEFAULT_THROTTLE_RATES': {
         'login': '10/minute',
+        'login_account': '30/hour',
     },
+    # 접속 주소는 서버가 직접 본 값만 믿습니다. (X-Forwarded-For 헤더를 조작해 횟수 제한을 피하지 못하게)
+    # 프록시 뒤에서는 serve.py가 WMS_TRUSTED_PROXY로 실제 접속 주소를 넘겨받습니다.
+    'NUM_PROXIES': 0,
 }
+
+# 횟수 제한 기록을 파일에 남겨 서버를 다시 시작해도 초기화되지 않게 합니다. (테스트는 기본 메모리 캐시)
+if not TESTING:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache', 'LOCATION': str(BASE_DIR / 'cache')}}
 
 ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '')
 # 오류 감시: 같은 오류 알림은 이 시간(분)에 한 번만, 택배사 연결이 이 횟수만큼 연속 실패하면 알립니다.
@@ -217,7 +228,6 @@ CARRIER_FAIL_ALERT = int(os.environ.get('CARRIER_FAIL_ALERT', '3'))
 # 개발 서버는 dev, 운영 서버(serve.py)는 prod 이름을 씁니다. 테스트 중에는 파일과 알림을 쓰지 않습니다.
 LOG_DIR = BASE_DIR / 'logs'
 LOG_NAME = os.environ.get('WMS_LOG_NAME', 'dev')
-TESTING = len(sys.argv) > 1 and sys.argv[1] == 'test'
 _file_handler = {'class': 'logging.handlers.TimedRotatingFileHandler', 'when': 'midnight', 'encoding': 'utf-8', 'formatter': 'plain', 'delay': True}
 LOGGING = {
     'version': 1,

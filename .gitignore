@@ -29,3 +29,6 @@ logs/
 
 # 편집기 작업공간 파일
 *.code-workspace
+
+# 로그인 횟수 제한 기록
+cache/

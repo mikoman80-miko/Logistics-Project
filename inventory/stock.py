@@ -7,7 +7,7 @@
 
 from django.db.models import F, Sum
 
-from .models import ItemStock
+from .models import Item, ItemStock
 
 
 def add(item, quantity, location=None):
@@ -50,6 +50,8 @@ def unassigned(item):
 
 def move(item, quantity, source, target):
     """source(None이면 미지정 재고)에서 target으로 옮깁니다. 모자라면 오류 문구를 돌려줍니다."""
+    # 같은 상품을 동시에 옮기는 요청이 수량 확인을 함께 통과하지 못하도록 상품 행을 먼저 잠그고 최신 총재고를 읽습니다.
+    item.quantity = Item.objects.select_for_update().values_list('quantity', flat=True).get(pk=item.pk)
     available = at(item, source) if source else unassigned(item)
     if quantity > available:
         where = source.full_code if source else '위치 미지정'
@@ -62,10 +64,13 @@ def move(item, quantity, source, target):
 
 def set_at(item, location, quantity):
     """재고 조사: 이 위치의 수량을 quantity로 맞춥니다. 바뀐 양(+/-)을 돌려줍니다."""
-    before = at(item, location)
+    row = ItemStock.objects.select_for_update().filter(item=item, location=location).first()
+    before = row.quantity if row else 0  # 잠근 뒤에 읽어 동시에 조사해도 바뀐 양이 어긋나지 않게 합니다.
     if quantity != before:
-        row, _ = ItemStock.objects.select_for_update().get_or_create(item=item, location=location)
-        ItemStock.objects.filter(pk=row.pk).update(quantity=quantity)
+        if row:
+            ItemStock.objects.filter(pk=row.pk).update(quantity=quantity)
+        else:
+            ItemStock.objects.create(item=item, location=location, quantity=quantity)
     return quantity - before
 
 

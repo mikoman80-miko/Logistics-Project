@@ -28,6 +28,7 @@ from rest_framework.permissions import AllowAny, BasePermission, IsAdminUser, Is
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from . import audit, carrier, due, monitor, stock
@@ -2615,6 +2616,12 @@ class HealthView(APIView):
         return Response({'status': 'ok', 'database': 'ok', 'time': timezone.localtime().isoformat()})
 
 
+def revoke_login_tokens(user):
+    # 비밀번호·사원증이 바뀌면 이미 발급된 로그인 갱신 토큰을 모두 쓸 수 없게 합니다. (접근 토큰은 수명이 짧아 곧 만료됩니다)
+    for token in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=token)
+
+
 class PasswordChangeView(APIView):
     # 로그인한 사람이 자기 비밀번호를 바꿉니다. 현재 비밀번호 추측을 막기 위해 로그인과 같은 횟수 제한을 둡니다.
     permission_classes = [IsAuthenticated]
@@ -2635,7 +2642,12 @@ class PasswordChangeView(APIView):
             return error_response(' '.join(exc.messages))
         user.set_password(new)
         user.save(update_fields=['password'])
-        return Response({'message': '비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.'})
+        # 다른 기기의 로그인은 끊고, 지금 쓰는 기기는 새 토큰으로 이어갑니다.
+        revoke_login_tokens(user)
+        refresh = RefreshToken.for_user(user)
+        return Response(
+            {'message': '비밀번호를 바꿨습니다. 다른 기기에서는 다시 로그인해야 합니다.', 'access': str(refresh.access_token), 'refresh': str(refresh)}
+        )
 
 
 class UserViewSet(AuditMixin, viewsets.ModelViewSet):
@@ -2662,6 +2674,7 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
             return error_response('관리자 계정은 사원증으로 로그인할 수 없습니다. 현장작업자 계정에 발급하세요.')
         code = 'EMP-' + ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(12))
         WorkerBadge.objects.update_or_create(user=user, defaults={'code': WorkerBadge.digest(code)})
+        revoke_login_tokens(user)
         audit.record(request.user, user, '사원증 발급', after={})
         return Response(
             {
@@ -2685,6 +2698,7 @@ class UserViewSet(AuditMixin, viewsets.ModelViewSet):
             return error_response(' '.join(exc.messages))
         user.set_password(password)
         user.save(update_fields=['password'])
+        revoke_login_tokens(user)
         audit.record(request.user, user, '비밀번호 초기화', after={})
         return Response({'message': f'[{user.username}] 비밀번호를 초기화했습니다. 로그인 후 직접 바꾸도록 안내하세요.'})
 

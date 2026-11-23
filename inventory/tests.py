@@ -2,11 +2,13 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import (
     AppNotification,
@@ -60,6 +62,22 @@ class AuthTests(BaseCase):
         res = self.client.post('/api/token/', {'username': 'boss', 'password': 'pw-strong-1'})
         res = self.client.post('/api/token/refresh/', {'refresh': res.data['refresh']})
         self.assertEqual(res.status_code, 200)
+
+    def test_login_throttle_ignores_forged_forwarded_for(self):
+        # X-Forwarded-For를 바꿔 가며 보내도 같은 접속 주소의 시도는 분당 10회를 넘지 못합니다.
+        cache.clear()
+        self.addCleanup(cache.clear)
+        codes = [self.client.post('/api/token/', {'username': f'u{i}', 'password': 'x'}, HTTP_X_FORWARDED_FOR=f'10.0.0.{i}').status_code for i in range(12)]
+        self.assertEqual(codes[:10], [401] * 10)
+        self.assertEqual(codes[10:], [429, 429])
+
+    def test_login_throttle_per_account(self):
+        # 접속 주소가 계속 바뀌어도 한 계정의 시도는 시간당 30회로 제한됩니다.
+        cache.clear()
+        self.addCleanup(cache.clear)
+        codes = [self.client.post('/api/token/', {'username': 'boss', 'password': 'x'}, REMOTE_ADDR=f'10.0.1.{i}').status_code for i in range(32)]
+        self.assertEqual(codes[:30], [401] * 30)
+        self.assertEqual(codes[30:], [429, 429])
 
     def test_any_staff_account_is_admin(self):
         # 사용자 이름이 admin이 아니어도 관리자 계정이면 변경할 수 있어야 합니다.
@@ -897,8 +915,18 @@ class AccountAndMyWorkTests(BaseCase):
         self.assertEqual(res.status_code, 200, res.data)
         self.worker.refresh_from_db()
         self.assertTrue(self.worker.check_password('Better-pass-77'))
+        self.assertIn('access', res.data)
         self.client.force_authenticate(None)
         self.assertEqual(self.client.post(self.URL, {}).status_code, 401)
+
+    def test_password_change_revokes_old_refresh_token(self):
+        old = str(RefreshToken.for_user(self.worker))
+        self.assertEqual(self.client.post('/api/token/refresh/', {'refresh': old}).status_code, 200)
+        self.client.force_authenticate(self.worker)
+        res = self.client.post(self.URL, {'current_password': 'pw-strong-2', 'new_password': 'Better-pass-77'})
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.post('/api/token/refresh/', {'refresh': old}).status_code, 401)
+        self.assertEqual(self.client.post('/api/token/refresh/', {'refresh': res.data['refresh']}).status_code, 200)
 
     def test_mine_filter_shows_only_my_logs(self):
         InventoryLog.objects.create(item=self.item, action='IN', quantity_changed=1, user=self.worker)

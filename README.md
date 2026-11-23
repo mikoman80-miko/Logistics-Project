@@ -179,7 +179,10 @@ myenv\Scripts\python restore_check.py    # 복원 리허설: 가장 최근 백�
 ## 배포 전 확인
 
 - 보안: 화면에는 콘텐츠 보안 정책(CSP)이 걸려 이 서버의 스크립트만 실행됩니다. 사원증 코드는 DB에 해시로만 저장됩니다. 운영 서버는 요청 본문을 10MB까지만 받습니다.
-- `.env`로 바꿀 수 있는 값: `BACKUP_KEEP_DAYS`(백업 보관 일수, 기본 30, 0이면 지우지 않음), `DB_CONN_MAX_AGE`(DB 연결 재사용 초, 기본 60)
+- `.env`로 바꿀 수 있는 값: `BACKUP_KEEP_DAYS`(백업 보관 일수, 기본 30, 0이면 지우지 않음), `DB_CONN_MAX_AGE`(DB 연결 재사용 초, 기본 60), `BACKUP_COPY_DIR`(백업을 이 PC 밖에도 복사할 폴더. 다른 PC·외장 저장소 경로, 비우면 복사 안 함), `WMS_TRUSTED_PROXY`(HTTPS 프록시의 IP, 아래 참고)
+- HTTPS 프록시(nginx 등) 뒤에서 운영하면 `.env`에 `WMS_TRUSTED_PROXY=<프록시 IP>`와 `DJANGO_HTTPS=True`를 함께 넣습니다. 프록시는 `X-Forwarded-For`, `X-Forwarded-Proto` 헤더를 붙여 줘야 합니다. 프록시 없이 직접 열 때는 둘 다 넣지 않습니다.
+- 로그인 횟수 제한 기록은 `cache/` 폴더에 저장되어 서버를 다시 시작해도 유지됩니다. 로그인은 접속 주소별 분당 10회, 계정별 시간당 30회까지입니다.
+- 백업 파일에는 전체 데이터가 들어 있으니 `db_backups`와 `BACKUP_COPY_DIR` 폴더는 관리자만 접근하도록 권한을 제한하세요.
 
 - 운영 모드(`npm run prod:start`)로 실행합니다. 디버그는 자동으로 꺼집니다.
 - HTTPS를 쓰는 경우에만 `.env`에 `DJANGO_HTTPS=True`를 넣습니다. (사내망 HTTP에서 켜면 접속이 막힙니다)

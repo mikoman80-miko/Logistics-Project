@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.urls import include, path, re_path
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import ScopedRateThrottle, SimpleRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from inventory.serializers import RoleTokenObtainPairSerializer
@@ -8,9 +8,18 @@ from config import spa
 from inventory.views import BadgeLoginView, CarrierWebhookView, HealthView, PasswordChangeView
 
 
+class AccountRateThrottle(SimpleRateThrottle):
+    # 접속 주소가 달라도 같은 계정으로 계속 틀리면 막습니다.
+    scope = 'login_account'
+
+    def get_cache_key(self, request, view):
+        username = str(request.data.get('username') or '').strip().lower()
+        return self.cache_format % {'scope': self.scope, 'ident': username} if username else None
+
+
 class LoginView(TokenObtainPairView):
     serializer_class = RoleTokenObtainPairSerializer
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ScopedRateThrottle, AccountRateThrottle]
     throttle_scope = 'login'
 
 

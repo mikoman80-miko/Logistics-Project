@@ -53,6 +53,21 @@ def backup_mariadb():
 
     print(f'[완료] 백업 성공! 파일이 저장되었습니다: {backup_path}')
     remove_old_backups(db_name)
+    return copy_offsite(backup_path)
+
+
+def copy_offsite(backup_path):
+    # 이 PC가 고장 나도 백업이 남도록 .env의 BACKUP_COPY_DIR(다른 PC·외장 저장소 폴더)에도 복사합니다. 비워 두면 복사하지 않습니다.
+    target = os.environ.get('BACKUP_COPY_DIR', '').strip()
+    if not target:
+        return True
+    try:
+        Path(target).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(backup_path, target)
+    except OSError as e:
+        print(f'[실패] 백업은 만들었지만 {target} 로 복사하지 못했습니다.\n에러 내용: {e}')
+        return False
+    print(f'[완료] 다른 곳에도 복사했습니다: {target}')
     return True
 
 

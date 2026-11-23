@@ -74,8 +74,8 @@ import { buildPickList } from '../../utils/pickList'
 import { dueLabel, sortByDue, toneClass, useNow } from '../../utils/due'
 
 // 집품은 재고를 바꾸지 않습니다. 꺼낸 개수만 세고, 실제 출고는 주문별 출고 화면에서 합니다.
-// 화면을 벗어났다 돌아와도 이어서 하도록 진행 상황을 브라우저에 저장합니다.
-const STORAGE_KEY = 'wms_picking'
+// 화면을 벗어났다 돌아와도 이어서 하도록 진행 상황을 브라우저에 저장합니다. 공용 단말에서 다른 작업자에게 보이지 않게 계정별로 나눕니다.
+const STORAGE_KEY = `wms_picking_${localStorage.getItem('username')}`
 const router = useRouter()
 const dialog = useDialogStore()
 const { ok, fail } = useWorkFeedback()
