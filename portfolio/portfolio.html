@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>WMS 물류관리시스템 포트폴리오</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; color: #1f2937; font-size: 10.5pt; line-height: 1.55; }
+  .page { width: 210mm; height: 297mm; padding: 16mm 16mm 14mm; page-break-after: always; position: relative; overflow: hidden; }
+  .page:last-child { page-break-after: auto; }
+  h1 { font-size: 27pt; margin: 0 0 4px; letter-spacing: -0.5px; }
+  h2 { font-size: 15pt; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid #0b5cab; color: #0b3d75; }
+  h3 { font-size: 11.5pt; margin: 14px 0 4px; color: #0b3d75; }
+  p { margin: 4px 0; }
+  .sub { font-size: 12.5pt; color: #4b5563; margin-bottom: 14px; }
+  .links { margin: 10px 0 14px; padding: 10px 14px; background: #f1f5f9; border-radius: 6px; font-size: 10pt; }
+  .links b { display: inline-block; width: 68px; color: #0b3d75; }
+  .chips span { display: inline-block; background: #e0ecf8; color: #0b3d75; border-radius: 12px; padding: 2px 10px; margin: 0 4px 5px 0; font-size: 9.5pt; font-weight: 600; }
+  .nums { display: flex; gap: 8px; margin: 12px 0; }
+  .nums div { flex: 1; text-align: center; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 2px; }
+  .nums strong { display: block; font-size: 17pt; color: #0b5cab; }
+  .nums small { color: #6b7280; font-size: 8.5pt; }
+  ul { margin: 4px 0 4px 18px; padding: 0; }
+  li { margin: 2px 0; }
+  .flow { display: flex; align-items: center; gap: 4px; margin: 8px 0 12px; }
+  .flow div { flex: 1; text-align: center; background: #0b5cab; color: #fff; border-radius: 5px; padding: 6px 0; font-weight: 700; font-size: 10pt; }
+  .flow i { color: #6b7280; font-style: normal; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.8pt; margin: 6px 0; }
+  th, td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f1f5f9; width: 26%; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .grid figure, .grid3 figure { margin: 0; }
+  .grid img, .grid3 img { width: 100%; border: 1px solid #cbd5e1; border-radius: 4px; display: block; }
+  figcaption { font-size: 8.8pt; color: #4b5563; text-align: center; margin-top: 2px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .foot { position: absolute; bottom: 8mm; left: 16mm; right: 16mm; font-size: 8.5pt; color: #9ca3af; display: flex; justify-content: space-between; }
+  .note { font-size: 9pt; color: #6b7280; }
+</style>
+</head>
+<body>
+
+<!-- 1. 표지·요약 -->
+<section class="page">
+  <h1>WMS 물류관리시스템</h1>
+  <div class="sub">발주·입고부터 재고, 출고, 택배 연동, 반품까지 — 현장 작업자가 바코드 스캔만으로 일하는 창고 관리 시스템</div>
+
+  <div class="links">
+    <div><b>GitHub</b> github.com/mikoman80-miko/Logistics-Project</div>
+    <div><b>시연 영상</b> 첨부 파일 WMS_시연영상.mp4 (1분 18초)</div>
+    <div><b>개발 형태</b> 개인 프로젝트 (기획·설계·백엔드·프런트엔드·테스트·배포 구성 전 과정)</div>
+  </div>
+
+  <div class="chips">
+    <span>Python 3.14</span><span>Django 6</span><span>Django REST Framework</span><span>JWT</span><span>MariaDB</span>
+    <span>Vue 3</span><span>Pinia</span><span>Vue Router</span><span>Tailwind v4</span><span>Vite</span>
+    <span>Playwright</span><span>GitHub Actions</span><span>Ruff · ESLint</span><span>pm2 · waitress</span>
+  </div>
+
+  <div class="nums">
+    <div><strong>26</strong><small>화면 (관리·현장)</small></div>
+    <div><strong>169</strong><small>단위 테스트</small></div>
+    <div><strong>32</strong><small>브라우저 e2e 테스트</small></div>
+    <div><strong>0</strong><small>ESLint 경고</small></div>
+    <div><strong>CI</strong><small>push·PR마다 자동 검증</small></div>
+  </div>
+
+  <h2>프로젝트 소개</h2>
+  <p>엑셀과 종이로 하던 입출고·재고 관리에서 생기는 <b>수량 불일치, 잘못된 출고, 추적 불가</b> 문제를 줄이기 위해 만들었습니다. 관리자는 주문·발주·기준정보·보고서를 다루는 관리 화면을, 현장 작업자는 큰 글씨와 단축키 중심의 스캔 화면을 씁니다. 실제 택배사 대신 가상 택배사 서버를 직접 만들어 운송장 발급, 집하 요청, 서명된 웹훅까지 연동 흐름을 구현했습니다.</p>
+
+  <h3>이 프로젝트에서 중점을 둔 것</h3>
+  <ul>
+    <li><b>재고 정합성</b>: 재고를 바꾸는 모든 경로를 한 모듈로 모으고, 트랜잭션·행 잠금으로 동시 작업에도 수량이 틀어지지 않게 했습니다.</li>
+    <li><b>현장 사용성</b>: 바코드 스캐너(키보드 입력) 기준의 한 손 작업, 사원증 로그인, 작업자 전환, F1 도움말.</li>
+    <li><b>운영 가능성</b>: 로그 회전, 오류·택배 장애 알림, DB 백업과 복원 리허설, 운영 모드 서버.</li>
+    <li><b>검증 체계</b>: 린트·단위 테스트·브라우저 테스트·CI를 갖춰 변경해도 깨지지 않게 했습니다.</li>
+  </ul>
+  <div class="foot"><span>WMS 물류관리시스템 포트폴리오</span><span>1 / 5</span></div>
+</section>
+
+<!-- 2. 기능 -->
+<section class="page">
+  <h2>핵심 기능과 업무 흐름</h2>
+  <div class="flow"><div>발주</div><i>▶</i><div>입고(스캔)</div><i>▶</i><div>위치별 재고</div><i>▶</i><div>주문·출고</div><i>▶</i><div>택배 연동</div><i>▶</i><div>반품</div></div>
+
+  <table>
+    <tr><th>입고</th><td>발주 등록, 발주 제안(안전 재고·최근 30일 출고량 기반), 스캔 입고, 입고 취소, 검수 차이(부족·파손·초과) 기록과 거래처별 차이율 보고서</td></tr>
+    <tr><th>재고</th><td>시리얼 상품과 수량 상품 겸용, 위치별 재고와 이동, 위치 보충, 스캔 재고 조사, 오늘의 순환 재고 조사, 재고 부족 알림</td></tr>
+    <tr><th>출고</th><td>주문 등록 시 운송장 자동 발급, 묶음배송, 부분 출고(남은 수량은 새 주문), 집품(여러 주문을 위치 순서로), 출고 마감 시각 기준 긴급·마감 정렬</td></tr>
+    <tr><th>택배 연동</th><td>가상 택배사 "가온택배": 운송장 발급·집하 요청·반품 회수, 상태 변경 웹훅(서명 검증), 연속 장애 감지 알림</td></tr>
+    <tr><th>반품</th><td>시리얼 또는 상품·수량 반품, 원래 주문 기준 수량 제한, 현장에서 재고 복귀·폐기 선택</td></tr>
+    <tr><th>보고·감사</th><td>일일 마감, 입출고 통계, 재고 일수·회전율·장기 재고·반품률 분석, 작업자 실적, 기준정보 변경 이력, 입출고 장부</td></tr>
+    <tr><th>계정·권한</th><td>관리자/현장작업자 권한 분리(화면·API 양쪽), 사원증 발급·로그인, 사용자 관리</td></tr>
+    <tr><th>알림</th><td>슬랙·디스코드 웹훅과 화면 안 알림(읽음 표시), 입고 지연 알림 명령</td></tr>
+  </table>
+
+  <h3>업무 시나리오 (시연 영상)</h3>
+  <ol style="margin:4px 0 4px 18px;padding:0">
+    <li>관리자가 출고 주문을 등록하면 가상 택배사에 운송장이 자동 발급됩니다.</li>
+    <li>현장 작업자가 출고 목록에서 주문을 골라 상품을 스캔합니다. 잘못된 상품은 즉시 오류로 막습니다.</li>
+    <li>출고를 완료하면 재고가 차감되고 장부에 기록되며 택배사에 집하를 요청합니다.</li>
+    <li>택배사가 배송 단계를 바꿀 때마다 웹훅으로 WMS에 자동 반영됩니다.</li>
+    <li>관리자는 주문 관리, 시리얼 이력, 통계·분석, 일일 마감 화면에서 결과를 확인합니다.</li>
+  </ol>
+
+  <h3>데이터 구조 (주요 관계)</h3>
+  <table>
+    <tr><th>상품 · 위치</th><td>상품(Item) ─ 위치별 재고(ItemStock) ─ 보관 위치(WarehouseLocation), 상품 ─ 시리얼(ItemSerial)</td></tr>
+    <tr><th>입고</th><td>거래처 ─ 발주서 ─ 발주 품목 ─ (입고된 시리얼, 검수 차이)</td></tr>
+    <tr><th>출고 · 반품</th><td>출고 주문 ─ 주문 품목 ─ 출고한 시리얼 / 반품 주문 ─ 원래 주문, 시리얼 / 택배 이벤트</td></tr>
+    <tr><th>이력</th><td>입출고 장부(InventoryLog), 기준정보 변경 이력(MasterChange), 일일 마감, 알림</td></tr>
+  </table>
+  <p class="note">전체 ERD는 저장소의 docs/DESIGN.md에 있습니다.</p>
+  <div class="foot"><span>WMS 물류관리시스템 포트폴리오</span><span>2 / 5</span></div>
+</section>
+
+<!-- 3. 설계 결정 -->
+<section class="page">
+  <h2>주요 설계 결정</h2>
+
+  <h3>1. 재고 수량은 한 곳에서만 바꾼다</h3>
+  <p><b>문제</b> 총재고와 위치별 재고가 어긋나면 "화면에는 있는데 선반에 없는" 일이 생깁니다.<br>
+  <b>해결</b> 입고·출고·반품·이동·조정이 모두 stock.py의 add·remove·move를 거치게 했습니다. 위치별 합은 총재고를 넘지 않고, 모자라는 부분은 "위치 미지정" 재고로 보여 줍니다.</p>
+
+  <h3>2. 동시 작업에서도 수량이 틀어지지 않게</h3>
+  <p><b>문제</b> 두 작업자가 같은 상품을 동시에 옮기면 수량 확인을 함께 통과해 재고가 음수가 될 수 있습니다.<br>
+  <b>해결</b> 요청 하나를 하나의 트랜잭션으로 처리(ATOMIC_REQUESTS)하고, 재고 행을 select_for_update로 잠근 뒤 F() 식으로 DB에서 직접 증감합니다. 모든 변경은 입출고 장부에 누가·언제·얼마나로 남깁니다.</p>
+
+  <h3>3. 시리얼 관리와 수량 관리를 한 흐름에서</h3>
+  <p><b>문제</b> 스마트폰은 한 대씩 추적하고, 케이블은 수량만 관리하는 등 상품마다 방식이 다릅니다.<br>
+  <b>해결</b> 상품별로 시리얼 관리 여부를 정하고, 시리얼 상품은 1개씩 스캔하며 입고→출고 주문→반품 이력을 추적합니다. 시리얼 없이 있던 재고도 출고 때 시리얼을 붙여 점진적으로 전환할 수 있습니다.</p>
+
+  <h3>4. 외부 택배사 연동은 한 파일로 격리</h3>
+  <p><b>해결</b> 가상 택배사 서버를 만들어 HTTP API와 서명된 웹훅으로만 통신하게 하고, 택배사를 바꿀 때는 carrier.py만 교체하면 됩니다. 택배사 연속 장애는 감지해 알림을 보냅니다.</p>
+
+  <h3>5. 보안</h3>
+  <ul>
+    <li>사원증 코드는 DB에 해시로만 저장 (마이그레이션 0028)</li>
+    <li>로그인 횟수 제한(접속 주소별·계정별), 제한 기록은 재시작 후에도 유지</li>
+    <li>화면 CSP, 운영 모드 디버그 비활성화, 요청 본문 10MB 제한</li>
+    <li>비밀 값은 .env로만 읽고 저장소에는 예시 파일만 포함, 공개 전 커밋 이력 전체 점검</li>
+  </ul>
+
+  <h3>6. 운영 안정성</h3>
+  <ul>
+    <li>일 단위 로그 회전(전체 30일·오류 90일), 서버 오류와 택배 장애를 웹훅·화면 알림으로 통지</li>
+    <li>보관 기간을 둔 DB 백업, 복원 리허설 스크립트, 헬스체크 API</li>
+    <li>개발은 pm2, 운영은 빌드한 화면과 Django를 waitress 서버 한 개로 제공</li>
+  </ul>
+  <div class="foot"><span>WMS 물류관리시스템 포트폴리오</span><span>3 / 5</span></div>
+</section>
+
+<!-- 4. 화면 -->
+<section class="page">
+  <h2>관리 화면</h2>
+  <div class="grid">
+    <figure><img src="../docs/screenshots/01-today.png"><figcaption>오늘 할 일 — 출고 마감, 입고 지연, 택배 확인, 재고 부족</figcaption></figure>
+    <figure><img src="../docs/screenshots/02-stock.png"><figcaption>재고 현황 — 스캔 입출고, 위치별 재고, 이동</figcaption></figure>
+    <figure><img src="../docs/screenshots/03-orders.png"><figcaption>주문 관리 — 운송장, 묶음배송, 긴급 지정</figcaption></figure>
+    <figure><img src="../docs/screenshots/05-dashboard.png"><figcaption>입출고 통계</figcaption></figure>
+    <figure><img src="../docs/screenshots/06-analysis.png"><figcaption>재고·반품 분석 — 재고 일수, 회전율, 반품률</figcaption></figure>
+    <figure><img src="../docs/screenshots/07-daily-close.png"><figcaption>일일 마감 — 실적과 남은 일</figcaption></figure>
+  </div>
+
+  <h2 style="margin-top:14px">현장 화면 · 가상 택배사</h2>
+  <div class="grid3">
+    <figure><img src="../docs/screenshots/09-work-home.png"><figcaption>현장 홈</figcaption></figure>
+    <figure><img src="../docs/screenshots/10-work-outbound.png"><figcaption>현장 출고</figcaption></figure>
+    <figure><img src="../docs/screenshots/12-carrier-console.png"><figcaption>가온택배 송장 콘솔</figcaption></figure>
+  </div>
+  <p class="note" style="margin-top:6px">화면은 시연용 데이터(seed_demo)로 캡처했습니다. 이름·주소는 모두 가상의 값입니다.</p>
+  <div class="foot"><span>WMS 물류관리시스템 포트폴리오</span><span>4 / 5</span></div>
+</section>
+
+<!-- 5. 품질 -->
+<section class="page">
+  <h2>품질 관리와 개발 방식</h2>
+  <table>
+    <tr><th>단위 테스트</th><td>Django TestCase 169개. 재고 증감, 동시성, 권한, 택배 연동, 보고서 등</td></tr>
+    <tr><th>브라우저 테스트</th><td>Playwright 32개. 실제 서버와 별도 테스트 DB로 발주→입고→출고→반품, 스캔 오류, 권한별 화면, 엑셀 등 업무 흐름 검증</td></tr>
+    <tr><th>정적 검사</th><td>Ruff(백엔드), ESLint 경고 0개(프런트엔드)</td></tr>
+    <tr><th>자동화</th><td>통합 검증 스크립트(verify.sh), pre-commit(커밋 시 검사), GitHub Actions CI(MariaDB 서비스로 push·PR마다 린트·테스트·빌드)</td></tr>
+    <tr><th>변경 관리</th><td>기능 단위 커밋, 브랜치와 PR로 병합, 의존성은 안정 버전으로 정기 갱신</td></tr>
+    <tr><th>문서</th><td>README(설치·운영·기능), docs/ARCHITECTURE.md(폴더 구조), docs/DESIGN.md(ERD·설계 결정), 화면 설계서</td></tr>
+  </table>
+
+  <h3>기술 스택 선택 이유</h3>
+  <ul>
+    <li><b>Django + DRF</b>: 모델·마이그레이션·관리자·인증을 빠르게 갖추고, 트랜잭션과 행 잠금으로 재고 정합성을 다루기 좋아서 선택했습니다.</li>
+    <li><b>Vue 3(Composition API) + Pinia</b>: 스캔 입력과 단축키가 많은 현장 화면을 컴포넌트 단위로 나누어 유지보수하기 위해 선택했습니다.</li>
+    <li><b>MariaDB</b>: 운영 PC에 설치하기 쉽고 행 잠금(InnoDB)을 지원해 재고 처리에 적합합니다.</li>
+    <li><b>Playwright</b>: 스캔 흐름처럼 키보드 중심 동작을 실제 브라우저로 검증하기 위해 사용했습니다.</li>
+  </ul>
+
+  <h3>한계와 앞으로의 계획</h3>
+  <ul>
+    <li>택배사는 가상 서버로 구현했습니다. 실제 택배사 API 연동은 carrier.py 교체로 확장할 수 있는 구조입니다.</li>
+    <li>현재는 단일 창고, 단일 PC 운영을 가정합니다. 다중 창고와 HTTPS 프록시 뒤 배포는 설정만 문서화되어 있습니다.</li>
+    <li>라이브 데모 서버는 없으며, 시연 영상과 시연 데이터 생성 명령(seed_demo)으로 대신합니다.</li>
+  </ul>
+
+  <h3>직접 실행해 보기</h3>
+  <p>저장소 README의 "처음 설치"를 따라 설치한 뒤, <b>manage.py seed_demo</b>로 시연 데이터를 만들고 <b>npm run start</b>를 실행하면 http://localhost:5173 에서 모든 메뉴를 눌러 볼 수 있습니다. 시연 계정은 관리자 manager01, 현장작업자 worker01 (공개용 데모 값)입니다.</p>
+
+  <div class="links" style="margin-top:16px">
+    <div><b>GitHub</b> github.com/mikoman80-miko/Logistics-Project</div>
+    <div><b>문서</b> README.md · docs/ARCHITECTURE.md · docs/DESIGN.md</div>
+  </div>
+  <div class="foot"><span>WMS 물류관리시스템 포트폴리오</span><span>5 / 5</span></div>
+</section>
+
+</body>
+</html>
