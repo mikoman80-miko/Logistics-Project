@@ -217,7 +217,7 @@ REST_FRAMEWORK = {
 
 # 횟수 제한 기록을 파일에 남겨 서버를 다시 시작해도 초기화되지 않게 합니다. (테스트는 기본 메모리 캐시)
 if not TESTING:
-    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.filebased.FileBasedCache', 'LOCATION': str(BASE_DIR / 'cache')}}
+    CACHES = {'default': {'BACKEND': 'config.cache.SafeFileBasedCache', 'LOCATION': str(BASE_DIR / 'cache')}}
 
 ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '')
 # 오류 감시: 같은 오류 알림은 이 시간(분)에 한 번만, 택배사 연결이 이 횟수만큼 연속 실패하면 알립니다.
