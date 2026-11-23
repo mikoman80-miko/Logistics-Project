@@ -25,6 +25,8 @@ myenv\Scripts\python manage.py seed_demo   # 개발 DB 전용. 발주→입고�
 npm run start                              # http://localhost:5173
 ```
 
+시연 영상(1분 18초)과 제출용 포트폴리오 PDF는 [portfolio/](portfolio/) 폴더에 있습니다. ([WMS_시연영상.mp4](portfolio/WMS_시연영상.mp4), [WMS_포트폴리오.pdf](portfolio/WMS_포트폴리오.pdf))
+
 시연 계정(공개용 데모 값)은 관리자 `manager01`, 현장작업자 `worker01`~`worker05`이고 비밀번호는 `Demo-wms-2026!`입니다.
 
 ## 화면
