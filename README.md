@@ -29,7 +29,29 @@ npm run start                              # http://localhost:5173
 
 ## 화면
 
-> 화면 캡처는 `docs/screenshots/`에 추가합니다.
+시연 데이터(`seed_demo`)로 캡처한 화면입니다.
+
+### 관리 화면
+
+| 오늘 할 일 | 재고 현황 |
+| --- | --- |
+| ![오늘 할 일](docs/screenshots/01-today.png) | ![재고 현황](docs/screenshots/02-stock.png) |
+| **주문 관리** | **발주 관리** |
+| ![주문 관리](docs/screenshots/03-orders.png) | ![발주 관리](docs/screenshots/04-purchase-order.png) |
+| **입출고 통계** | **재고·반품 분석** |
+| ![입출고 통계](docs/screenshots/05-dashboard.png) | ![재고·반품 분석](docs/screenshots/06-analysis.png) |
+| **일일 마감** | **작업자 실적** |
+| ![일일 마감](docs/screenshots/07-daily-close.png) | ![작업자 실적](docs/screenshots/08-workers.png) |
+
+### 현장 화면 (스캔 작업, 큰 글씨)
+
+| 현장 홈 | 출고 | 입고 |
+| --- | --- | --- |
+| ![현장 홈](docs/screenshots/09-work-home.png) | ![출고](docs/screenshots/10-work-outbound.png) | ![입고](docs/screenshots/11-work-inbound.png) |
+
+### 가상 택배사 송장 콘솔
+
+![가온택배 송장 콘솔](docs/screenshots/12-carrier-console.png)
 
 ## 처음 설치
 
